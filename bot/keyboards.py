@@ -1,7 +1,12 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def build_keyboard(tasks, include_add_button=False):
+def build_cancel_keyboard(text: str = 'Отмена') -> InlineKeyboardMarkup:
+    print('DEBUG: build_cancel_keyboard')
+    return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data='cancel')]])
+
+
+def build_keyboard(tasks, include_add_button: bool = False, include_back_button: bool = False) -> InlineKeyboardMarkup | None:
     print('DEBUG: build_keyboard')
     keyboard = []
     for task in tasks:
@@ -20,12 +25,14 @@ def build_keyboard(tasks, include_add_button=False):
             ])
     if include_add_button:
         keyboard.append([InlineKeyboardButton('Добавить задачу', callback_data='add_task')])
+    if include_back_button:
+        keyboard.append([InlineKeyboardButton('Назад', callback_data='cancel')])
     if keyboard:
         return InlineKeyboardMarkup(keyboard)
     return InlineKeyboardMarkup([[InlineKeyboardButton('Добавить задачу', callback_data='add_task')]]) if include_add_button else None
 
 
-def build_completed_keyboard(tasks):
+def build_completed_keyboard(tasks, include_back_button: bool = False) -> InlineKeyboardMarkup | None:
     print('DEBUG: build_completed_keyboard')
     keyboard = []
     for task in tasks:
@@ -37,6 +44,8 @@ def build_completed_keyboard(tasks):
                     callback_data=f"restore_{task['id']}"
                 )
             ])
+    if include_back_button:
+        keyboard.append([InlineKeyboardButton('Назад', callback_data='cancel')])
     if keyboard:
         return InlineKeyboardMarkup(keyboard)
     return None

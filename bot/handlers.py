@@ -13,9 +13,9 @@ from .keyboards import (
     build_keyboard, build_completed_keyboard, build_category_keyboard,
     build_priority_keyboard, build_filter_category_keyboard,
     build_filter_priority_keyboard, build_filter_tag_keyboard,
-    build_tag_keyboard
+    build_tag_keyboard, build_cancel_keyboard
 )
-from .utils import schedule_reminder_job, reply_or_edit
+from .utils import schedule_reminder_job, reply_or_edit, send_and_store
 
 
 async def send_daily_tasks(context: CallbackContext):
@@ -23,14 +23,19 @@ async def send_daily_tasks(context: CallbackContext):
     tasks = load_tasks()
     markup = build_keyboard(tasks)
     text = 'Задачи на сегодня:' if markup else 'На сегодня задач нет.'
-    await context.bot.send_message(
-        chat_id=OWNER_CHAT_ID,
-        text=text,
-        reply_markup=markup,
-    )
+    await send_and_store(context, OWNER_CHAT_ID, text, reply_markup=markup)
 
 async def start(update: Update, context: CallbackContext):
     print('DEBUG: start')
+    if update.callback_query:
+        await update.callback_query.answer()
+    chat_id = update.effective_chat.id
+    for mid in context.chat_data.get('bot_messages', set()):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
+    context.chat_data['bot_messages'] = set()
     keyboard = [
         [InlineKeyboardButton('Показать задачи', callback_data='show_tasks')],
         [InlineKeyboardButton('Добавить задачу', callback_data='add_task')],
@@ -39,7 +44,7 @@ async def start(update: Update, context: CallbackContext):
         [InlineKeyboardButton('Настройки', callback_data='settings')],
     ]
     markup = InlineKeyboardMarkup(keyboard)
-    await reply_or_edit(update, 'Привет! Я помогу спланировать день.', reply_markup=markup)
+    await send_and_store(context, chat_id, 'Привет! Я помогу спланировать день.', reply_markup=markup)
 
 
 async def list_tasks(update: Update, context: CallbackContext):
@@ -55,17 +60,17 @@ async def list_tasks(update: Update, context: CallbackContext):
         tasks = [t for t in tasks if t.get('priority') == priority]
     if tag:
         tasks = [t for t in tasks if tag in t.get('tags', [])]
-    markup = build_keyboard(tasks, include_add_button=True)
+    markup = build_keyboard(tasks, include_add_button=True, include_back_button=True)
     text = 'Ваши задачи:' if tasks else 'Задач нет.'
-    await reply_or_edit(update, text, reply_markup=markup)
+    await reply_or_edit(update, context, text, reply_markup=markup)
 
 
 async def list_completed(update: Update, context: CallbackContext):
     print('DEBUG: list_completed')
     tasks = load_tasks()
-    markup = build_completed_keyboard(tasks)
+    markup = build_completed_keyboard(tasks, include_back_button=True)
     text = 'Выполненные задачи:' if markup else 'Выполненных задач нет.'
-    await reply_or_edit(update, text, reply_markup=markup)
+    await reply_or_edit(update, context, text, reply_markup=markup)
 
 
 async def task_selected(update: Update, context: CallbackContext):
@@ -76,7 +81,7 @@ async def task_selected(update: Update, context: CallbackContext):
     context.user_data['task_id'] = task_id
     message = query.message
     if message:
-        await message.edit_text('Введите комментарий к задаче:')
+        await message.edit_text('Введите комментарий к задаче:', reply_markup=build_cancel_keyboard())
     return COMMENT
 
 
@@ -90,7 +95,7 @@ async def edit_task_start(update: Update, context: CallbackContext):
     title = next((t['title'] for t in tasks if t['id'] == task_id), '')
     message = query.message
     if message:
-        await message.edit_text(f'Текущее название: {title}\nВведите новое название задачи:')
+        await message.edit_text(f'Текущее название: {title}\nВведите новое название задачи:', reply_markup=build_cancel_keyboard())
     return EDIT_TASK_TITLE
 
 
@@ -99,7 +104,8 @@ async def edit_task_category(update: Update, context: CallbackContext):
     context.user_data['edit_title'] = update.message.text
     categories = load_categories()
     markup = build_category_keyboard(categories)
-    await update.message.reply_text('Выберите категорию:', reply_markup=markup)
+    sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return EDIT_TASK_CATEGORY_CHOOSE
 
 
@@ -110,7 +116,7 @@ async def choose_edit_category(update: Update, context: CallbackContext):
     data = query.data
     categories = load_categories()
     if data == 'new_category':
-        await query.message.edit_text('Введите название новой категории:')
+        await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
         return EDIT_TASK_CATEGORY_INPUT
     index = int(data.split('_')[2])
     context.user_data['edit_category'] = categories[index]
@@ -128,7 +134,8 @@ async def edit_task_category_input(update: Update, context: CallbackContext):
         save_categories(categories)
     context.user_data['edit_category'] = new_cat
     markup = build_priority_keyboard()
-    await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    sent = await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return EDIT_TASK_PRIORITY
 
 
@@ -167,7 +174,8 @@ async def add_tags_to_task(update: Update, context: CallbackContext):
             task['tags'] = current_tags
             break
     save_tasks(tasks)
-    await update.message.reply_text('Теги добавлены.')
+    sent = await update.message.reply_text('Теги добавлены.')
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -183,7 +191,8 @@ async def save_comment(update: Update, context: CallbackContext):
             task['comment'] = comment
             break
     save_tasks(tasks)
-    await update.message.reply_text('Задача сохранена.')
+    sent = await update.message.reply_text('Задача сохранена.')
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await send_daily_tasks(context)
     return ConversationHandler.END
 
@@ -223,7 +232,7 @@ async def add_tag_start(update: Update, context: CallbackContext):
     await query.answer()
     task_id = int(query.data.split('_')[1])
     context.user_data['tag_id'] = task_id
-    await query.message.edit_text('Введите теги через запятую:')
+    await query.message.edit_text('Введите теги через запятую:', reply_markup=build_cancel_keyboard())
     return EDIT_TASK_TAGS
 
 
@@ -233,9 +242,10 @@ async def add_task_start(update: Update, context: CallbackContext):
         await update.callback_query.answer()
         message = update.callback_query.message
         if message:
-            await message.edit_text('Введите название новой задачи:')
+            await message.edit_text('Введите название новой задачи:', reply_markup=build_cancel_keyboard())
     else:
-        await update.message.reply_text('Введите название новой задачи:')
+        sent = await update.message.reply_text('Введите название новой задачи:', reply_markup=build_cancel_keyboard())
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return ADD_TASK_TITLE
 
 async def add_task_category(update: Update, context: CallbackContext):
@@ -243,7 +253,8 @@ async def add_task_category(update: Update, context: CallbackContext):
     context.user_data['new_title'] = update.message.text
     categories = load_categories()
     markup = build_category_keyboard(categories)
-    await update.message.reply_text('Выберите категорию:', reply_markup=markup)
+    sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return ADD_TASK_CATEGORY_CHOOSE
 
 
@@ -254,7 +265,7 @@ async def choose_task_category(update: Update, context: CallbackContext):
     data = query.data
     categories = load_categories()
     if data == 'new_category':
-        await query.message.edit_text('Введите название новой категории:')
+        await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
         return ADD_TASK_CATEGORY_INPUT
     index = int(data.split('_')[2])
     context.user_data['new_category'] = categories[index]
@@ -272,7 +283,8 @@ async def add_task_category_input(update: Update, context: CallbackContext):
         save_categories(categories)
     context.user_data['new_category'] = new_cat
     markup = build_priority_keyboard()
-    await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    sent = await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return ADD_TASK_PRIORITY
 
 
@@ -282,7 +294,7 @@ async def choose_task_priority(update: Update, context: CallbackContext):
     await query.answer()
     priority = query.data.split('_')[1]
     context.user_data['new_priority'] = priority
-    await query.message.edit_text('Введите теги через запятую (можно оставить пустым):')
+    await query.message.edit_text('Введите теги через запятую (можно оставить пустым):', reply_markup=build_cancel_keyboard())
     return ADD_TASK_TAGS
 
 
@@ -305,7 +317,8 @@ async def add_task_tags(update: Update, context: CallbackContext):
         'comment': '',
     })
     save_tasks(tasks)
-    await update.message.reply_text('Задача добавлена.')
+    sent = await update.message.reply_text('Задача добавлена.')
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -329,7 +342,8 @@ async def categories_menu(update: Update, context: CallbackContext):
         if update.callback_query:
             await message.edit_text('Категории:', reply_markup=markup)
         else:
-            await message.reply_text('Категории:', reply_markup=markup)
+            sent = await message.reply_text('Категории:', reply_markup=markup)
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return CATEGORY_MENU
 
 
@@ -337,9 +351,10 @@ async def category_add(update: Update, context: CallbackContext):
     print('DEBUG: category_add')
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.edit_text('Введите название новой категории:')
+        await update.callback_query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
     else:
-        await update.message.reply_text('Введите название новой категории:')
+        sent = await update.message.reply_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return CATEGORY_ADD
 
 
@@ -360,7 +375,7 @@ async def category_edit_start(update: Update, context: CallbackContext):
     await query.answer()
     idx = int(query.data.split('_')[1])
     context.user_data['cat_index'] = idx
-    await query.message.edit_text('Введите новое название категории:')
+    await query.message.edit_text('Введите новое название категории:', reply_markup=build_cancel_keyboard())
     return CATEGORY_EDIT
 
 
@@ -407,7 +422,8 @@ async def filter_menu(update: Update, context: CallbackContext):
         if update.callback_query:
             await message.edit_text('Фильтр задач:', reply_markup=markup)
         else:
-            await message.reply_text('Фильтр задач:', reply_markup=markup)
+            sent = await message.reply_text('Фильтр задач:', reply_markup=markup)
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return FILTER_MENU
 
 
@@ -498,7 +514,8 @@ async def settings_menu(update: Update, context: CallbackContext):
         if update.callback_query:
             await message.edit_text("Настройки напоминаний:", reply_markup=markup)
         else:
-            await message.reply_text("Настройки напоминаний:", reply_markup=markup)
+            sent = await message.reply_text("Настройки напоминаний:", reply_markup=markup)
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return SETTINGS_MENU
 
 
@@ -506,9 +523,10 @@ async def settings_set_time(update: Update, context: CallbackContext):
     print('DEBUG: settings_set_time')
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.edit_text("Введите время в формате ЧЧ:ММ")
+        await update.callback_query.message.edit_text("Введите время в формате ЧЧ:ММ", reply_markup=build_cancel_keyboard())
     else:
-        await update.message.reply_text("Введите время в формате ЧЧ:ММ")
+        sent = await update.message.reply_text("Введите время в формате ЧЧ:ММ", reply_markup=build_cancel_keyboard())
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return SETTINGS_TIME
 
 
@@ -520,10 +538,12 @@ async def settings_save_time(update: Update, context: CallbackContext):
         if not (0 <= hour < 24 and 0 <= minute < 60):
             raise ValueError
     except Exception:
-        await update.message.reply_text("Неверный формат времени, попробуйте ещё раз.")
+        sent = await update.message.reply_text("Неверный формат времени, попробуйте ещё раз.")
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
         return SETTINGS_TIME
     save_setting("reminder_time", f"{hour:02d}:{minute:02d}")
-    await update.message.reply_text("Время напоминания обновлено.")
+    sent = await update.message.reply_text("Время напоминания обновлено.")
+    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     schedule_reminder_job(context.application)
     return await settings_menu(update, context)
 
@@ -543,7 +563,8 @@ async def toggle_weekends(update: Update, context: CallbackContext):
         if update.callback_query:
             await message.edit_text("Настройки обновлены.")
         else:
-            await message.reply_text("Настройки обновлены.")
+            sent = await message.reply_text("Настройки обновлены.")
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return await settings_menu(update, context)
 
 
@@ -556,7 +577,8 @@ async def cancel(update: Update, context: CallbackContext):
         if update.callback_query:
             await message.edit_text('Действие отменено.')
         else:
-            await message.reply_text('Действие отменено.')
+            sent = await message.reply_text('Действие отменено.')
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await start(update, context)
     return ConversationHandler.END
 
@@ -663,6 +685,7 @@ def main():
     application.add_handler(CallbackQueryHandler(delete_task, pattern=r'^delete_'))
     application.add_handler(CallbackQueryHandler(restore_task, pattern=r'^restore_'))
     application.add_handler(CommandHandler('completed', list_completed))
+    application.add_handler(CallbackQueryHandler(cancel, pattern='^cancel$'))
 
     schedule_reminder_job(application)
 

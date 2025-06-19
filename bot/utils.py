@@ -25,7 +25,15 @@ def schedule_reminder_job(application: Application):
     )
 
 
-async def reply_or_edit(update: Update, text: str, reply_markup=None):
+async def send_and_store(context, chat_id: int, text: str, reply_markup=None):
+    print('DEBUG: send_and_store')
+    sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+    if hasattr(context, 'chat_data'):
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    return sent
+
+
+async def reply_or_edit(update: Update, context, text: str, reply_markup=None):
     """Send or edit message depending on update type."""
     message = update.message or (update.callback_query and update.callback_query.message)
     if update.callback_query:
@@ -34,6 +42,8 @@ async def reply_or_edit(update: Update, text: str, reply_markup=None):
             await message.edit_text(text, reply_markup=reply_markup)
     else:
         if message:
-            await message.reply_text(text, reply_markup=reply_markup)
+            sent = await message.reply_text(text, reply_markup=reply_markup)
+            if hasattr(context, 'chat_data'):
+                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
 
 
