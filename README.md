@@ -11,9 +11,9 @@
 
 ## Как запустить
 
-1. Установите зависимости:
+1. Установите зависимости (включая поддержку `JobQueue`):
    ```bash
-   pip install python-telegram-bot==20.0
+   pip install "python-telegram-bot[job_queue]==20.0"
    ```
 2. Создайте файл `.env` или задайте переменные окружения:
    - `BOT_TOKEN` — токен вашего бота.

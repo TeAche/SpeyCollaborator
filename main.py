@@ -98,7 +98,16 @@ async def main():
     application.add_handler(conv)
 
     # Job to send tasks daily at 9:00 on weekdays
-    application.job_queue.run_daily(send_daily_tasks, time(hour=9, minute=0), days=(0, 1, 2, 3, 4))
+    if application.job_queue:
+        application.job_queue.run_daily(
+            send_daily_tasks,
+            time(hour=9, minute=0),
+            days=(0, 1, 2, 3, 4),
+        )
+    else:
+        print(
+            "Warning: JobQueue is not available. Install python-telegram-bot[job_queue] to enable scheduled tasks."
+        )
 
     await application.initialize()
     await application.start()
