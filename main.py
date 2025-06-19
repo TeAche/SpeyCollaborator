@@ -8,7 +8,7 @@ from telegram.ext import (ApplicationBuilder, CallbackContext, CallbackQueryHand
                           filters)
 
 TASKS_FILE = 'tasks.json'
-BOT_TOKEN = os.getenv('BOT_TOKEN', 'PLACEHOLDER_TOKEN')
+BOT_TOKEN = os.getenv('TOKEN', 'PLACEHOLDER_TOKEN')
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '123456789'))
 
 # Conversation states
