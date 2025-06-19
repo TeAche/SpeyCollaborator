@@ -13,7 +13,7 @@
 
 1. Установите зависимости (включая поддержку `JobQueue`):
    ```bash
-   pip install "python-telegram-bot[job_queue]==20.0"
+   pip install "python-telegram-bot[job-queue]==20.0"
    ```
 2. Создайте файл `.env` или задайте переменные окружения:
    - `BOT_TOKEN` — токен вашего бота.
@@ -23,4 +23,4 @@
    python main.py
    ```
 
-Задачи хранатся в файле `tasks.json`. Измените его под свои нужды.
+Задачи хранятся в файле `tasks.json`. Измените его под свои нужды.

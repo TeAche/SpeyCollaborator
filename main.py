@@ -106,7 +106,7 @@ async def main():
         )
     else:
         print(
-            "Warning: JobQueue is not available. Install python-telegram-bot[job_queue] to enable scheduled tasks."
+            "Warning: JobQueue is not available. Install python-telegram-bot[job-queue] to enable scheduled tasks."
         )
 
     await application.initialize()
