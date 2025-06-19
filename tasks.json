@@ -1,5 +1,5 @@
 [
-  {"id": 1, "title": "Прочитать почту", "done": false, "comment": ""},
-  {"id": 2, "title": "Написать отчет", "done": false, "comment": ""},
-  {"id": 3, "title": "Позвонить клиенту", "done": false, "comment": ""}
+  {"id": 1, "title": "Прочитать почту", "category": "Работа", "priority": "средний", "done": false, "comment": ""},
+  {"id": 2, "title": "Написать отчет", "category": "Работа", "priority": "высокий", "done": false, "comment": ""},
+  {"id": 3, "title": "Позвонить клиенту", "category": "Работа", "priority": "средний", "done": false, "comment": ""}
 ]
