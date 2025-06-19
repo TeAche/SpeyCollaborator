@@ -15,7 +15,7 @@
    ```bash
    pip install "python-telegram-bot[job-queue]==20.0"
    ```
-2. Создайте файл `.env` или задайте переменные окружения:
+2. Создайте файл `.env` или задайте переменные окружения (этот файл добавлен в `.gitignore`):
    - `BOT_TOKEN` — токен вашего бота.
    - `OWNER_CHAT_ID` — ваш chat id в Telegram.
 3. Запустите:
