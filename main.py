@@ -1,11 +1,13 @@
 import json
 import os
 from datetime import time
-
+from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (ApplicationBuilder, CallbackContext, CallbackQueryHandler,
                           CommandHandler, ConversationHandler, MessageHandler,
                           filters)
+
+load_dotenv()  # загрузит переменные из .env
 
 TASKS_FILE = 'tasks.json'
 BOT_TOKEN = os.getenv('TOKEN', 'PLACEHOLDER_TOKEN')
