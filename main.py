@@ -84,7 +84,7 @@ def cancel(update: Update, context: CallbackContext):
     return ConversationHandler.END
 
 
-async def main():
+def main():
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler('start', start))
@@ -111,9 +111,8 @@ async def main():
             "Warning: JobQueue is not available. Install python-telegram-bot[job-queue] to enable scheduled tasks."
         )
 
-    await application.run_polling()
+    application.run_polling()
 
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    main()
