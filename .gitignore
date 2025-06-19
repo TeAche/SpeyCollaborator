@@ -1,5 +1,6 @@
-# Ignore environment variables file
+# Ignore environment variables file and .idea
 .env
+.idea
 
 # Ignore Python virtual environment directories
 venv/
