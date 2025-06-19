@@ -6,7 +6,8 @@ from .constants import *
 from .db import (
     init_db, load_tasks, save_tasks,
     load_categories, save_categories,
-    load_tags, load_settings, save_setting
+    load_tags, load_active_tags,
+    load_settings, save_setting
 )
 from .keyboards import (
     build_keyboard, build_completed_keyboard, build_category_keyboard,
@@ -422,7 +423,7 @@ async def filter_choose_tag(update: Update, context: CallbackContext):
     print('DEBUG: filter_choose_tag')
     query = update.callback_query
     await query.answer()
-    tags = load_tags()
+    tags = load_active_tags()
     markup = build_filter_tag_keyboard(tags)
     await query.message.reply_text('Выберите тег:', reply_markup=markup)
     return FILTER_MENU
@@ -452,7 +453,7 @@ async def filter_set(update: Update, context: CallbackContext):
             filters_data.pop('tag', None)
         else:
             index = int(data.split('_')[1])
-            tags = load_tags()
+            tags = load_active_tags()
             if 0 <= index < len(tags):
                 filters_data['tag'] = tags[index]
     elif data == 'filter_reset':
@@ -610,6 +611,8 @@ def main():
                 CallbackQueryHandler(filter_choose_priority, pattern='^filter_priority$'),
                 CallbackQueryHandler(filter_choose_tag, pattern='^filter_tag$'),
                 CallbackQueryHandler(filter_set, pattern='^f(cat|prio|tag)_.*|^filter_reset$'),
+                CommandHandler('filter', filter_menu),
+                CallbackQueryHandler(filter_menu, pattern='^filter$'),
             ]
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],

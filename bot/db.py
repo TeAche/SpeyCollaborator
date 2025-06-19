@@ -156,6 +156,21 @@ def load_tags():
     return [r[0] for r in rows]
 
 
+def load_active_tags():
+    print("DEBUG: load_active_tags")
+    conn = sqlite3.connect(DB_FILE)
+    rows = conn.execute(
+        """
+        SELECT DISTINCT tag FROM task_tags
+        JOIN tasks ON tasks.id = task_tags.task_id
+        WHERE tasks.done = 0
+        ORDER BY tag
+        """
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
 def load_settings():
     print("DEBUG: load_settings")
     conn = sqlite3.connect(DB_FILE)
