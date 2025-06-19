@@ -73,7 +73,9 @@ async def list_tasks(update: Update, context: CallbackContext):
     text = 'Ваши задачи:' if tasks else 'Задач нет.'
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text, reply_markup=markup)
+        message = update.callback_query.message
+        if message:
+            await message.reply_text(text, reply_markup=markup)
     else:
         await update.message.reply_text(text, reply_markup=markup)
 
@@ -83,7 +85,9 @@ async def task_selected(update: Update, context: CallbackContext):
     await query.answer()
     task_id = int(query.data.split('_')[1])
     context.user_data['task_id'] = task_id
-    await query.message.reply_text('Введите комментарий к задаче:')
+    message = query.message
+    if message:
+        await message.reply_text('Введите комментарий к задаче:')
     return COMMENT
 
 
@@ -105,7 +109,9 @@ async def save_comment(update: Update, context: CallbackContext):
 async def add_task_start(update: Update, context: CallbackContext):
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text('Введите название новой задачи:')
+        message = update.callback_query.message
+        if message:
+            await message.reply_text('Введите название новой задачи:')
     else:
         await update.message.reply_text('Введите название новой задачи:')
     return ADD_TASK_TITLE
