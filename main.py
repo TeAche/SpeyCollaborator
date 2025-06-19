@@ -111,10 +111,7 @@ async def main():
             "Warning: JobQueue is not available. Install python-telegram-bot[job-queue] to enable scheduled tasks."
         )
 
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    await application.idle()
+    await application.run_polling()
 
 
 if __name__ == '__main__':
