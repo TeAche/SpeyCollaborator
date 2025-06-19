@@ -29,16 +29,19 @@ OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '123456789'))
     ADD_TASK_CATEGORY_CHOOSE,
     ADD_TASK_CATEGORY_INPUT,
     ADD_TASK_PRIORITY,
+    ADD_TASK_TAGS,
     EDIT_TASK_TITLE,
     EDIT_TASK_CATEGORY_CHOOSE,
     EDIT_TASK_CATEGORY_INPUT,
     EDIT_TASK_PRIORITY,
+    EDIT_TASK_TAGS,
     CATEGORY_MENU,
     CATEGORY_EDIT,
     CATEGORY_ADD,
     SETTINGS_MENU,
     SETTINGS_TIME,
-) = range(14)
+    FILTER_MENU,
+) = range(17)
 
 
 def init_db():
@@ -61,6 +64,24 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS categories (
             name TEXT PRIMARY KEY
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tags (
+            name TEXT PRIMARY KEY
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_tags (
+            task_id INTEGER,
+            tag TEXT,
+            PRIMARY KEY(task_id, tag),
+            FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+            FOREIGN KEY(tag) REFERENCES tags(name) ON DELETE CASCADE
         )
         """
     )
@@ -94,6 +115,12 @@ def init_db():
                         t.get("comment", ""),
                     ),
                 )
+                for tag in t.get("tags", []):
+                    c.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
+                    c.execute(
+                        "INSERT OR IGNORE INTO task_tags(task_id, tag) VALUES (?, ?)",
+                        (t["id"], tag),
+                    )
     c.execute("SELECT COUNT(*) FROM categories")
     if c.fetchone()[0] == 0 and os.path.exists(CATEGORIES_FILE):
         with open(CATEGORIES_FILE, "r", encoding="utf-8") as f:
@@ -107,15 +134,18 @@ def load_tasks():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks ORDER BY id")]
-    conn.close()
     for t in tasks:
+        rows = conn.execute("SELECT tag FROM task_tags WHERE task_id=?", (t["id"],)).fetchall()
+        t["tags"] = [r[0] for r in rows]
         t["done"] = bool(t["done"])
+    conn.close()
     return tasks
 
 
 def save_tasks(tasks):
     conn = sqlite3.connect(DB_FILE)
     conn.execute("DELETE FROM tasks")
+    conn.execute("DELETE FROM task_tags")
     for t in tasks:
         conn.execute(
             "INSERT INTO tasks(id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?)",
@@ -128,6 +158,9 @@ def save_tasks(tasks):
                 t.get("comment", ""),
             ),
         )
+        for tag in t.get("tags", []):
+            conn.execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (tag,))
+            conn.execute("INSERT INTO task_tags(task_id, tag) VALUES (?, ?)", (t["id"], tag))
     conn.commit()
     conn.close()
 
@@ -146,6 +179,13 @@ def save_categories(categories):
         conn.execute("INSERT INTO categories(name) VALUES (?)", (name,))
     conn.commit()
     conn.close()
+
+
+def load_tags():
+    conn = sqlite3.connect(DB_FILE)
+    rows = conn.execute("SELECT name FROM tags ORDER BY name").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 
 def load_settings():
@@ -190,7 +230,7 @@ def build_keyboard(tasks, include_add_button=False):
         if not task.get('done'):
             keyboard.append([
                 InlineKeyboardButton(
-                    task['title'],
+                    f"{task['title']} ({task.get('category', '')}, {task.get('priority', '')})" + (f" [{', '.join(task.get('tags', []))}]" if task.get('tags') else ''),
                     callback_data=f"task_{task['id']}"
                 )
             ])
@@ -211,7 +251,7 @@ def build_completed_keyboard(tasks):
         if task.get('done'):
             keyboard.append([
                 InlineKeyboardButton(
-                    f"{task['title']} ({task.get('category', '')}, {task.get('priority', '')}) ✓",
+                    f"{task['title']} ({task.get('category', '')}, {task.get('priority', '')})" + (f" [{', '.join(task.get('tags', []))}]" if task.get('tags') else '') + " ✓",
                     callback_data=f"restore_{task['id']}"
                 )
             ])
@@ -239,6 +279,42 @@ def build_priority_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
+def build_filter_category_keyboard(categories):
+    keyboard = [[InlineKeyboardButton(cat, callback_data=f"fcat_{i}")]
+                for i, cat in enumerate(categories)]
+    keyboard.append([InlineKeyboardButton('Любая', callback_data='fcat_none')])
+    keyboard.append([InlineKeyboardButton('Назад', callback_data='filter')])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_filter_priority_keyboard():
+    keyboard = [
+        [InlineKeyboardButton('низкий', callback_data='fprio_низкий')],
+        [InlineKeyboardButton('средний', callback_data='fprio_средний')],
+        [InlineKeyboardButton('высокий', callback_data='fprio_высокий')],
+        [InlineKeyboardButton('Любой', callback_data='fprio_none')],
+        [InlineKeyboardButton('Назад', callback_data='filter')],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_filter_tag_keyboard(tags):
+    keyboard = [[InlineKeyboardButton(tag, callback_data=f"ftag_{i}")]
+                for i, tag in enumerate(tags)]
+    keyboard.append([InlineKeyboardButton('Любой', callback_data='ftag_none')])
+    keyboard.append([InlineKeyboardButton('Назад', callback_data='filter')])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_tag_keyboard(tags, include_new=True):
+    keyboard = [[InlineKeyboardButton(tag, callback_data=f"choose_tag_{i}")]
+                for i, tag in enumerate(tags)]
+    if include_new:
+        keyboard.append([InlineKeyboardButton('Новый тег', callback_data='new_tag')])
+    keyboard.append([InlineKeyboardButton('Отмена', callback_data='cancel')])
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def send_daily_tasks(context: CallbackContext):
     tasks = load_tasks()
     markup = build_keyboard(tasks)
@@ -255,6 +331,7 @@ async def start(update: Update, context: CallbackContext):
         [InlineKeyboardButton('Показать задачи', callback_data='show_tasks')],
         [InlineKeyboardButton('Добавить задачу', callback_data='add_task')],
         [InlineKeyboardButton('Категории', callback_data='categories')],
+        [InlineKeyboardButton('Фильтр', callback_data='filter')],
         [InlineKeyboardButton('Настройки', callback_data='settings')],
     ]
     markup = InlineKeyboardMarkup(keyboard)
@@ -267,6 +344,16 @@ async def start(update: Update, context: CallbackContext):
 
 async def list_tasks(update: Update, context: CallbackContext):
     tasks = load_tasks()
+    filters_data = context.user_data.get('filters', {})
+    category = filters_data.get('category')
+    priority = filters_data.get('priority')
+    tag = filters_data.get('tag')
+    if category:
+        tasks = [t for t in tasks if t.get('category') == category]
+    if priority:
+        tasks = [t for t in tasks if t.get('priority') == priority]
+    if tag:
+        tasks = [t for t in tasks if tag in t.get('tags', [])]
     markup = build_keyboard(tasks, include_add_button=True)
     text = 'Ваши задачи:' if tasks else 'Задач нет.'
     if update.callback_query:
@@ -354,16 +441,25 @@ async def choose_edit_priority(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     priority = query.data.split('_')[1]
+    context.user_data['edit_priority'] = priority
+    await query.message.reply_text('Введите теги через запятую (можно оставить пустым):')
+    return EDIT_TASK_TAGS
+
+
+async def edit_task_tags(update: Update, context: CallbackContext):
+    tags_text = update.message.text.strip()
+    tags = [t.strip() for t in tags_text.split(',') if t.strip()] if tags_text else []
     task_id = context.user_data.get('edit_id')
     tasks = load_tasks()
     for task in tasks:
         if task['id'] == task_id:
             task['title'] = context.user_data.get('edit_title')
             task['category'] = context.user_data.get('edit_category')
-            task['priority'] = priority
+            task['priority'] = context.user_data.get('edit_priority')
+            task['tags'] = tags
             break
     save_tasks(tasks)
-    await query.message.reply_text('Задача обновлена.')
+    await update.message.reply_text('Задача обновлена.')
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -459,8 +555,17 @@ async def choose_task_priority(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     priority = query.data.split('_')[1]
+    context.user_data['new_priority'] = priority
+    await query.message.reply_text('Введите теги через запятую (можно оставить пустым):')
+    return ADD_TASK_TAGS
+
+
+async def add_task_tags(update: Update, context: CallbackContext):
+    tags_text = update.message.text.strip()
+    tags = [t.strip() for t in tags_text.split(',') if t.strip()] if tags_text else []
     title = context.user_data.get('new_title')
     category = context.user_data.get('new_category')
+    priority = context.user_data.get('new_priority')
     tasks = load_tasks()
     new_id = max([t['id'] for t in tasks], default=0) + 1
     tasks.append({
@@ -468,11 +573,12 @@ async def choose_task_priority(update: Update, context: CallbackContext):
         'title': title,
         'category': category,
         'priority': priority,
+        'tags': tags,
         'done': False,
         'comment': '',
     })
     save_tasks(tasks)
-    await query.message.reply_text('Задача добавлена.')
+    await update.message.reply_text('Задача добавлена.')
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -544,6 +650,83 @@ async def delete_category(update: Update, context: CallbackContext):
         save_categories(categories)
     await categories_menu(update, context)
     return CATEGORY_MENU
+
+
+async def filter_menu(update: Update, context: CallbackContext):
+    if update.callback_query:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+    else:
+        message = update.message
+    keyboard = [
+        [InlineKeyboardButton('Категория', callback_data='filter_category')],
+        [InlineKeyboardButton('Приоритет', callback_data='filter_priority')],
+        [InlineKeyboardButton('Тег', callback_data='filter_tag')],
+        [InlineKeyboardButton('Сбросить', callback_data='filter_reset')],
+        [InlineKeyboardButton('Отмена', callback_data='cancel')],
+    ]
+    markup = InlineKeyboardMarkup(keyboard)
+    if message:
+        await message.reply_text('Фильтр задач:', reply_markup=markup)
+    return FILTER_MENU
+
+
+async def filter_choose_category(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    categories = load_categories()
+    markup = build_filter_category_keyboard(categories)
+    await query.message.reply_text('Выберите категорию:', reply_markup=markup)
+    return FILTER_MENU
+
+
+async def filter_choose_priority(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    markup = build_filter_priority_keyboard()
+    await query.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    return FILTER_MENU
+
+
+async def filter_choose_tag(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    tags = load_tags()
+    markup = build_filter_tag_keyboard(tags)
+    await query.message.reply_text('Выберите тег:', reply_markup=markup)
+    return FILTER_MENU
+
+
+async def filter_set(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    filters_data = context.user_data.setdefault('filters', {})
+    if data.startswith('fcat_'):
+        if data == 'fcat_none':
+            filters_data.pop('category', None)
+        else:
+            index = int(data.split('_')[1])
+            categories = load_categories()
+            if 0 <= index < len(categories):
+                filters_data['category'] = categories[index]
+    elif data.startswith('fprio_'):
+        if data == 'fprio_none':
+            filters_data.pop('priority', None)
+        else:
+            filters_data['priority'] = data.split('_')[1]
+    elif data.startswith('ftag_'):
+        if data == 'ftag_none':
+            filters_data.pop('tag', None)
+        else:
+            index = int(data.split('_')[1])
+            tags = load_tags()
+            if 0 <= index < len(tags):
+                filters_data['tag'] = tags[index]
+    elif data == 'filter_reset':
+        context.user_data.pop('filters', None)
+    await list_tasks(update, context)
+    return FILTER_MENU
 
 
 async def settings_menu(update: Update, context: CallbackContext):
@@ -647,6 +830,7 @@ def main():
             ADD_TASK_CATEGORY_CHOOSE: [CallbackQueryHandler(choose_task_category, pattern=r'^choose_cat_\d+$|^new_category$')],
             ADD_TASK_CATEGORY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_category_input)],
             ADD_TASK_PRIORITY: [CallbackQueryHandler(choose_task_priority, pattern=r'^priority_')],
+            ADD_TASK_TAGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_task_tags)],
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
     )
@@ -659,6 +843,7 @@ def main():
             EDIT_TASK_CATEGORY_CHOOSE: [CallbackQueryHandler(choose_edit_category, pattern=r'^choose_cat_\d+$|^new_category$')],
             EDIT_TASK_CATEGORY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_task_category_input)],
             EDIT_TASK_PRIORITY: [CallbackQueryHandler(choose_edit_priority, pattern=r'^priority_')],
+            EDIT_TASK_TAGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_task_tags)],
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
     )
@@ -678,6 +863,20 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
     )
     application.add_handler(cat_conv)
+
+    filter_conv = ConversationHandler(
+        entry_points=[CommandHandler('filter', filter_menu), CallbackQueryHandler(filter_menu, pattern='^filter$')],
+        states={
+            FILTER_MENU: [
+                CallbackQueryHandler(filter_choose_category, pattern='^filter_category$'),
+                CallbackQueryHandler(filter_choose_priority, pattern='^filter_priority$'),
+                CallbackQueryHandler(filter_choose_tag, pattern='^filter_tag$'),
+                CallbackQueryHandler(filter_set, pattern='^f(cat|prio|tag)_.*|^filter_reset$'),
+            ]
+        },
+        fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
+    )
+    application.add_handler(filter_conv)
 
     settings_conv = ConversationHandler(
         entry_points=[CommandHandler('settings', settings_menu), CallbackQueryHandler(settings_menu, pattern='^settings$')],
