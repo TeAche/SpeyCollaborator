@@ -158,6 +158,22 @@
     "priority": "средний",
     "done": true,
     "comment": "Оплачено"
+  },
+  {
+    "id": 21,
+    "title": "Обновить Продажи по ВиОртису",
+    "category": "Работа",
+    "priority": "средний",
+    "done": false,
+    "comment": ""
+  },
+  {
+    "id": 22,
+    "title": "Доработать граббер для ВиОртис вместе с Codex",
+    "category": "Работа",
+    "priority": "средний",
+    "done": false,
+    "comment": ""
   }
 ]
 
