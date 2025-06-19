@@ -36,7 +36,9 @@ OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '123456789'))
     CATEGORY_MENU,
     CATEGORY_EDIT,
     CATEGORY_ADD,
-) = range(12)
+    SETTINGS_MENU,
+    SETTINGS_TIME,
+) = range(14)
 
 
 def init_db():
@@ -62,7 +64,20 @@ def init_db():
         )
         """
     )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
     conn.commit()
+
+    c.execute("SELECT COUNT(*) FROM settings")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO settings(key, value) VALUES ('reminder_time', '09:00')")
+        c.execute("INSERT INTO settings(key, value) VALUES ('notify_weekends', '0')")
 
     c.execute("SELECT COUNT(*) FROM tasks")
     if c.fetchone()[0] == 0 and os.path.exists(TASKS_FILE):
@@ -131,6 +146,42 @@ def save_categories(categories):
         conn.execute("INSERT INTO categories(name) VALUES (?)", (name,))
     conn.commit()
     conn.close()
+
+
+def load_settings():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    conn.close()
+    return {row["key"]: row["value"] for row in rows}
+
+
+def save_setting(key, value):
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
+        (key, str(value)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def schedule_reminder_job(application):
+    if not application.job_queue:
+        return
+    for job in application.job_queue.get_jobs_by_name("daily"):
+        job.schedule_removal()
+    settings = load_settings()
+    time_str = settings.get("reminder_time", "09:00")
+    hour, minute = map(int, time_str.split(":"))
+    notify_weekends = settings.get("notify_weekends", "0") == "1"
+    days = (0, 1, 2, 3, 4, 5, 6) if notify_weekends else (0, 1, 2, 3, 4)
+    application.job_queue.run_daily(
+        send_daily_tasks,
+        time(hour=hour, minute=minute),
+        days=days,
+        name="daily",
+    )
 
 
 def build_keyboard(tasks, include_add_button=False):
@@ -204,6 +255,7 @@ async def start(update: Update, context: CallbackContext):
         [InlineKeyboardButton('Показать задачи', callback_data='show_tasks')],
         [InlineKeyboardButton('Добавить задачу', callback_data='add_task')],
         [InlineKeyboardButton('Категории', callback_data='categories')],
+        [InlineKeyboardButton('Настройки', callback_data='settings')],
     ]
     markup = InlineKeyboardMarkup(keyboard)
     message = update.message or (update.callback_query and update.callback_query.message)
@@ -494,6 +546,70 @@ async def delete_category(update: Update, context: CallbackContext):
     return CATEGORY_MENU
 
 
+async def settings_menu(update: Update, context: CallbackContext):
+    if update.callback_query:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+    else:
+        message = update.message
+    settings = load_settings()
+    time_str = settings.get("reminder_time", "09:00")
+    weekends = settings.get("notify_weekends", "0") == "1"
+    keyboard = [
+        [InlineKeyboardButton(f"Время: {time_str}", callback_data="set_time")],
+        [
+            InlineKeyboardButton(
+                ("Не уведомлять в выходные" if weekends else "Уведомлять в выходные"),
+                callback_data="toggle_weekends",
+            )
+        ],
+        [InlineKeyboardButton("Отмена", callback_data="cancel")],
+    ]
+    markup = InlineKeyboardMarkup(keyboard)
+    if message:
+        await message.reply_text("Настройки напоминаний:", reply_markup=markup)
+    return SETTINGS_MENU
+
+
+async def settings_set_time(update: Update, context: CallbackContext):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text("Введите время в формате ЧЧ:ММ")
+    else:
+        await update.message.reply_text("Введите время в формате ЧЧ:ММ")
+    return SETTINGS_TIME
+
+
+async def settings_save_time(update: Update, context: CallbackContext):
+    text = update.message.text.strip()
+    try:
+        hour, minute = map(int, text.split(":"))
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            raise ValueError
+    except Exception:
+        await update.message.reply_text("Неверный формат времени, попробуйте ещё раз.")
+        return SETTINGS_TIME
+    save_setting("reminder_time", f"{hour:02d}:{minute:02d}")
+    await update.message.reply_text("Время напоминания обновлено.")
+    schedule_reminder_job(context.application)
+    return await settings_menu(update, context)
+
+
+async def toggle_weekends(update: Update, context: CallbackContext):
+    if update.callback_query:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+    else:
+        message = update.message
+    settings = load_settings()
+    current = settings.get("notify_weekends", "0") == "1"
+    save_setting("notify_weekends", "0" if current else "1")
+    schedule_reminder_job(context.application)
+    if message:
+        await message.reply_text("Настройки обновлены.")
+    return await settings_menu(update, context)
+
+
 async def cancel(update: Update, context: CallbackContext):
     message = update.message or (update.callback_query and update.callback_query.message)
     if update.callback_query:
@@ -563,21 +679,24 @@ def main():
     )
     application.add_handler(cat_conv)
 
+    settings_conv = ConversationHandler(
+        entry_points=[CommandHandler('settings', settings_menu), CallbackQueryHandler(settings_menu, pattern='^settings$')],
+        states={
+            SETTINGS_MENU: [
+                CallbackQueryHandler(settings_set_time, pattern='^set_time$'),
+                CallbackQueryHandler(toggle_weekends, pattern='^toggle_weekends$'),
+            ],
+            SETTINGS_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_save_time)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
+    )
+    application.add_handler(settings_conv)
+
     application.add_handler(CallbackQueryHandler(delete_task, pattern=r'^delete_'))
     application.add_handler(CallbackQueryHandler(restore_task, pattern=r'^restore_'))
     application.add_handler(CommandHandler('completed', list_completed))
 
-    # Job to send tasks daily at 9:00 on weekdays
-    if application.job_queue:
-        application.job_queue.run_daily(
-            send_daily_tasks,
-            time(hour=9, minute=0),
-            days=(0, 1, 2, 3, 4),
-        )
-    else:
-        print(
-            "Warning: JobQueue is not available. Install python-telegram-bot[job-queue] to enable scheduled tasks."
-        )
+    schedule_reminder_job(application)
 
     application.run_polling()
 
