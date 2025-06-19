@@ -1,4 +1,5 @@
 from datetime import time
+from telegram import Update
 from telegram.ext import Application
 
 from .db import load_settings
@@ -22,5 +23,17 @@ def schedule_reminder_job(application: Application):
         days=days,
         name="daily",
     )
+
+
+async def reply_or_edit(update: Update, text: str, reply_markup=None):
+    """Send or edit message depending on update type."""
+    message = update.message or (update.callback_query and update.callback_query.message)
+    if update.callback_query:
+        await update.callback_query.answer()
+        if message:
+            await message.edit_text(text, reply_markup=reply_markup)
+    else:
+        if message:
+            await message.reply_text(text, reply_markup=reply_markup)
 
 
