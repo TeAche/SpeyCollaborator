@@ -3,9 +3,15 @@ import os
 from datetime import time
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (ApplicationBuilder, CallbackContext, CallbackQueryHandler,
-                          CommandHandler, ConversationHandler, MessageHandler,
-                          filters)
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackContext,
+    CallbackQueryHandler,
+    CommandHandler,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 load_dotenv()  # загрузит переменные из .env
 
@@ -37,34 +43,38 @@ def build_keyboard(tasks):
     return InlineKeyboardMarkup(keyboard) if keyboard else None
 
 
-def send_daily_tasks(context: CallbackContext):
+async def send_daily_tasks(context: CallbackContext):
     tasks = load_tasks()
     markup = build_keyboard(tasks)
     text = 'Задачи на сегодня:' if markup else 'На сегодня задач нет.'
-    context.bot.send_message(chat_id=OWNER_CHAT_ID, text=text, reply_markup=markup)
+    await context.bot.send_message(
+        chat_id=OWNER_CHAT_ID,
+        text=text,
+        reply_markup=markup,
+    )
 
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text('Привет! Я помогу спланировать день.')
+async def start(update: Update, context: CallbackContext):
+    await update.message.reply_text('Привет! Я помогу спланировать день.')
 
 
-def list_tasks(update: Update, context: CallbackContext):
+async def list_tasks(update: Update, context: CallbackContext):
     tasks = load_tasks()
     markup = build_keyboard(tasks)
     text = 'Ваши задачи:' if markup else 'Задач нет.'
-    update.message.reply_text(text, reply_markup=markup)
+    await update.message.reply_text(text, reply_markup=markup)
 
 
-def task_selected(update: Update, context: CallbackContext):
+async def task_selected(update: Update, context: CallbackContext):
     query = update.callback_query
-    query.answer()
+    await query.answer()
     task_id = int(query.data.split('_')[1])
     context.user_data['task_id'] = task_id
-    query.message.reply_text('Введите комментарий к задаче:')
+    await query.message.reply_text('Введите комментарий к задаче:')
     return COMMENT
 
 
-def save_comment(update: Update, context: CallbackContext):
+async def save_comment(update: Update, context: CallbackContext):
     comment = update.message.text
     task_id = context.user_data.get('task_id')
     tasks = load_tasks()
@@ -74,13 +84,13 @@ def save_comment(update: Update, context: CallbackContext):
             task['comment'] = comment
             break
     save_tasks(tasks)
-    update.message.reply_text('Задача сохранена.')
-    send_daily_tasks(context)
+    await update.message.reply_text('Задача сохранена.')
+    await send_daily_tasks(context)
     return ConversationHandler.END
 
 
-def cancel(update: Update, context: CallbackContext):
-    update.message.reply_text('Действие отменено.')
+async def cancel(update: Update, context: CallbackContext):
+    await update.message.reply_text('Действие отменено.')
     return ConversationHandler.END
 
 
