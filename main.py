@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 from datetime import time
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -17,6 +18,7 @@ load_dotenv()  # загрузит переменные из .env
 
 TASKS_FILE = 'tasks.json'
 CATEGORIES_FILE = 'categories.json'
+DB_FILE = 'tasks.db'
 BOT_TOKEN = os.getenv('TOKEN', 'PLACEHOLDER_TOKEN')
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '123456789'))
 
@@ -37,28 +39,98 @@ OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '123456789'))
 ) = range(12)
 
 
+def init_db():
+    """Создает таблицы БД и при первом запуске импортирует данные из JSON."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            category TEXT,
+            priority TEXT,
+            done INTEGER DEFAULT 0,
+            comment TEXT
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS categories (
+            name TEXT PRIMARY KEY
+        )
+        """
+    )
+    conn.commit()
+
+    c.execute("SELECT COUNT(*) FROM tasks")
+    if c.fetchone()[0] == 0 and os.path.exists(TASKS_FILE):
+        with open(TASKS_FILE, "r", encoding="utf-8") as f:
+            for t in json.load(f):
+                c.execute(
+                    "INSERT INTO tasks(id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        t["id"],
+                        t["title"],
+                        t.get("category"),
+                        t.get("priority"),
+                        int(t.get("done", False)),
+                        t.get("comment", ""),
+                    ),
+                )
+    c.execute("SELECT COUNT(*) FROM categories")
+    if c.fetchone()[0] == 0 and os.path.exists(CATEGORIES_FILE):
+        with open(CATEGORIES_FILE, "r", encoding="utf-8") as f:
+            for name in json.load(f):
+                c.execute("INSERT OR IGNORE INTO categories(name) VALUES (?)", (name,))
+    conn.commit()
+    conn.close()
+
+
 def load_tasks():
-    if not os.path.exists(TASKS_FILE):
-        return []
-    with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks ORDER BY id")]
+    conn.close()
+    for t in tasks:
+        t["done"] = bool(t["done"])
+    return tasks
 
 
 def save_tasks(tasks):
-    with open(TASKS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(tasks, f, ensure_ascii=False, indent=2)
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM tasks")
+    for t in tasks:
+        conn.execute(
+            "INSERT INTO tasks(id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                t["id"],
+                t["title"],
+                t.get("category"),
+                t.get("priority"),
+                int(t.get("done", False)),
+                t.get("comment", ""),
+            ),
+        )
+    conn.commit()
+    conn.close()
 
 
 def load_categories():
-    if not os.path.exists(CATEGORIES_FILE):
-        return []
-    with open(CATEGORIES_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    conn = sqlite3.connect(DB_FILE)
+    rows = conn.execute("SELECT name FROM categories ORDER BY name").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 
 def save_categories(categories):
-    with open(CATEGORIES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(categories, f, ensure_ascii=False, indent=2)
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("DELETE FROM categories")
+    for name in categories:
+        conn.execute("INSERT INTO categories(name) VALUES (?)", (name,))
+    conn.commit()
+    conn.close()
 
 
 def build_keyboard(tasks, include_add_button=False):
@@ -433,6 +505,7 @@ async def cancel(update: Update, context: CallbackContext):
 
 
 def main():
+    init_db()
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler('start', start))
