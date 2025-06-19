@@ -154,14 +154,6 @@ async def choose_edit_priority(update: Update, context: CallbackContext):
     await query.answer()
     priority = query.data.split('_')[1]
     context.user_data['edit_priority'] = priority
-    await query.message.reply_text('Введите теги через запятую (можно оставить пустым):')
-    return EDIT_TASK_TAGS
-
-
-async def edit_task_tags(update: Update, context: CallbackContext):
-    print('DEBUG: edit_task_tags')
-    tags_text = update.message.text.strip()
-    tags = [t.strip() for t in tags_text.split(',') if t.strip()] if tags_text else []
     task_id = context.user_data.get('edit_id')
     tasks = load_tasks()
     for task in tasks:
@@ -169,10 +161,29 @@ async def edit_task_tags(update: Update, context: CallbackContext):
             task['title'] = context.user_data.get('edit_title')
             task['category'] = context.user_data.get('edit_category')
             task['priority'] = context.user_data.get('edit_priority')
-            task['tags'] = tags
             break
     save_tasks(tasks)
-    await update.message.reply_text('Задача обновлена.')
+    await query.message.reply_text('Задача обновлена.')
+    await list_tasks(update, context)
+    return ConversationHandler.END
+
+
+async def add_tags_to_task(update: Update, context: CallbackContext):
+    print('DEBUG: add_tags_to_task')
+    tags_text = update.message.text.strip()
+    tags = [t.strip() for t in tags_text.split(',') if t.strip()] if tags_text else []
+    task_id = context.user_data.get('tag_id')
+    tasks = load_tasks()
+    for task in tasks:
+        if task['id'] == task_id:
+            current_tags = task.get('tags', [])
+            for tag in tags:
+                if tag not in current_tags:
+                    current_tags.append(tag)
+            task['tags'] = current_tags
+            break
+    save_tasks(tasks)
+    await update.message.reply_text('Теги добавлены.')
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -220,6 +231,16 @@ async def restore_task(update: Update, context: CallbackContext):
     if query.message:
         await query.message.reply_text('Задача восстановлена.')
     await list_tasks(update, context)
+
+
+async def add_tag_start(update: Update, context: CallbackContext):
+    print('DEBUG: add_tag_start')
+    query = update.callback_query
+    await query.answer()
+    task_id = int(query.data.split('_')[1])
+    context.user_data['tag_id'] = task_id
+    await query.message.reply_text('Введите теги через запятую:')
+    return EDIT_TASK_TAGS
 
 
 async def add_task_start(update: Update, context: CallbackContext):
@@ -582,11 +603,19 @@ def main():
             EDIT_TASK_CATEGORY_CHOOSE: [CallbackQueryHandler(choose_edit_category, pattern=r'^choose_cat_\d+$|^new_category$')],
             EDIT_TASK_CATEGORY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_task_category_input)],
             EDIT_TASK_PRIORITY: [CallbackQueryHandler(choose_edit_priority, pattern=r'^priority_')],
-            EDIT_TASK_TAGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_task_tags)],
         },
         fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
     )
     application.add_handler(edit_conv)
+
+    tag_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_tag_start, pattern=r'^tag_')],
+        states={
+            EDIT_TASK_TAGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_tags_to_task)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel), CommandHandler('start', cancel), CallbackQueryHandler(cancel, pattern='^cancel$')],
+    )
+    application.add_handler(tag_conv)
 
     cat_conv = ConversationHandler(
         entry_points=[CommandHandler('categories', categories_menu), CallbackQueryHandler(categories_menu, pattern='^categories$')],

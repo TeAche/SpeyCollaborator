@@ -14,6 +14,7 @@ def build_keyboard(tasks, include_add_button=False):
                 )
             ])
             keyboard.append([
+                InlineKeyboardButton('🏷️', callback_data=f"tag_{task['id']}"),
                 InlineKeyboardButton('✏️', callback_data=f"edit_{task['id']}"),
                 InlineKeyboardButton('🗑️', callback_data=f"delete_{task['id']}"),
             ])
