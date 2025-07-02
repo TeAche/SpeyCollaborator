@@ -39,7 +39,12 @@ async def reply_or_edit(update: Update, context, text: str, reply_markup=None):
     if update.callback_query:
         await update.callback_query.answer()
         if message:
-            await message.edit_text(text, reply_markup=reply_markup)
+            try:
+                await message.edit_text(text, reply_markup=reply_markup)
+                return
+            except Exception:
+                pass
+        await send_and_store(context, update.effective_chat.id, text, reply_markup=reply_markup)
     else:
         if message:
             sent = await message.reply_text(text, reply_markup=reply_markup)
