@@ -1,6 +1,9 @@
 from datetime import time
 from telegram import Update
+import logging
 from telegram.ext import Application
+
+logger = logging.getLogger(__name__)
 
 from .db import load_settings
 
@@ -27,7 +30,11 @@ def schedule_reminder_job(application: Application):
 
 async def send_and_store(context, chat_id: int, text: str, reply_markup=None):
     print('DEBUG: send_and_store')
-    sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+    try:
+        sent = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+    except Exception:
+        logger.exception("Failed to send message to %s: %s", chat_id, text)
+        return None
     if hasattr(context, 'chat_data'):
         context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return sent
@@ -37,18 +44,23 @@ async def reply_or_edit(update: Update, context, text: str, reply_markup=None):
     """Send or edit message depending on update type."""
     message = update.message or (update.callback_query and update.callback_query.message)
     if update.callback_query:
-        await update.callback_query.answer()
+        try:
+            await update.callback_query.answer()
+        except Exception:
+            logger.exception("Failed to answer callback query")
         if message:
             try:
                 await message.edit_text(text, reply_markup=reply_markup)
-                return
             except Exception:
-                pass
-        await send_and_store(context, update.effective_chat.id, text, reply_markup=reply_markup)
+                logger.exception("Failed to edit message: %s", text)
     else:
         if message:
-            sent = await message.reply_text(text, reply_markup=reply_markup)
-            if hasattr(context, 'chat_data'):
-                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+            try:
+                sent = await message.reply_text(text, reply_markup=reply_markup)
+            except Exception:
+                logger.exception("Failed to send reply: %s", text)
+            else:
+                if hasattr(context, 'chat_data'):
+                    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
 
 

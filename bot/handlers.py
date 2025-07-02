@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CallbackContext, CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler, filters
 
@@ -36,7 +39,7 @@ async def start(update: Update, context: CallbackContext):
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=mid)
         except Exception:
-            pass
+            logger.exception("Failed to delete message %s" , mid)
     context.chat_data['bot_messages'] = set()
     keyboard = [
         [InlineKeyboardButton('Показать задачи', callback_data='show_tasks')],
@@ -83,7 +86,10 @@ async def task_selected(update: Update, context: CallbackContext):
     context.user_data['task_id'] = task_id
     message = query.message
     if message:
-        await message.edit_text('Введите комментарий к задаче:', reply_markup=build_cancel_keyboard())
+        try:
+            await message.edit_text('Введите комментарий к задаче:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to edit message')
     return COMMENT
 
 
@@ -97,7 +103,10 @@ async def edit_task_start(update: Update, context: CallbackContext):
     title = next((t['title'] for t in tasks if t['id'] == task_id), '')
     message = query.message
     if message:
-        await message.edit_text(f'Текущее название: {title}\nВведите новое название задачи:', reply_markup=build_cancel_keyboard())
+        try:
+            await message.edit_text(f'Текущее название: {title}\nВведите новое название задачи:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to edit message')
     return EDIT_TASK_TITLE
 
 
@@ -106,8 +115,12 @@ async def edit_task_category(update: Update, context: CallbackContext):
     context.user_data['edit_title'] = update.message.text
     categories = load_categories()
     markup = build_category_keyboard(categories)
-    sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return EDIT_TASK_CATEGORY_CHOOSE
 
 
@@ -118,12 +131,18 @@ async def choose_edit_category(update: Update, context: CallbackContext):
     data = query.data
     categories = load_categories()
     if data == 'new_category':
-        await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        try:
+            await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to edit message')
         return EDIT_TASK_CATEGORY_INPUT
     index = int(data.split('_')[2])
     context.user_data['edit_category'] = categories[index]
     markup = build_priority_keyboard()
-    await query.message.edit_text('Выберите приоритет:', reply_markup=markup)
+    try:
+        await query.message.edit_text('Выберите приоритет:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to edit message')
     return EDIT_TASK_PRIORITY
 
 
@@ -136,8 +155,12 @@ async def edit_task_category_input(update: Update, context: CallbackContext):
         save_categories(categories)
     context.user_data['edit_category'] = new_cat
     markup = build_priority_keyboard()
-    sent = await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return EDIT_TASK_PRIORITY
 
 
@@ -156,7 +179,10 @@ async def choose_edit_priority(update: Update, context: CallbackContext):
             task['priority'] = context.user_data.get('edit_priority')
             break
     save_tasks(tasks)
-    await query.message.edit_text('Задача обновлена.')
+    try:
+        await query.message.edit_text('Задача обновлена.')
+    except Exception:
+        logger.exception('Failed to edit message')
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -176,8 +202,12 @@ async def add_tags_to_task(update: Update, context: CallbackContext):
             task['tags'] = current_tags
             break
     save_tasks(tasks)
-    sent = await update.message.reply_text('Теги добавлены.')
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Теги добавлены.')
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -193,8 +223,12 @@ async def save_comment(update: Update, context: CallbackContext):
             task['comment'] = comment
             break
     save_tasks(tasks)
-    sent = await update.message.reply_text('Задача сохранена.')
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Задача сохранена.')
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await send_daily_tasks(context)
     return ConversationHandler.END
 
@@ -208,7 +242,10 @@ async def delete_task(update: Update, context: CallbackContext):
     tasks = [t for t in tasks if t['id'] != task_id]
     save_tasks(tasks)
     if query.message:
-        await query.message.edit_text('Задача удалена.')
+        try:
+            await query.message.edit_text('Задача удалена.')
+        except Exception:
+            logger.exception('Failed to edit message')
     await list_tasks(update, context)
 
 
@@ -224,7 +261,10 @@ async def restore_task(update: Update, context: CallbackContext):
             break
     save_tasks(tasks)
     if query.message:
-        await query.message.edit_text('Задача восстановлена.')
+        try:
+            await query.message.edit_text('Задача восстановлена.')
+        except Exception:
+            logger.exception('Failed to edit message')
     await list_tasks(update, context)
 
 
@@ -234,7 +274,10 @@ async def add_tag_start(update: Update, context: CallbackContext):
     await query.answer()
     task_id = int(query.data.split('_')[1])
     context.user_data['tag_id'] = task_id
-    await query.message.edit_text('Введите теги через запятую:', reply_markup=build_cancel_keyboard())
+    try:
+        await query.message.edit_text('Введите теги через запятую:', reply_markup=build_cancel_keyboard())
+    except Exception:
+        logger.exception('Failed to edit message')
     return EDIT_TASK_TAGS
 
 
@@ -244,10 +287,17 @@ async def add_task_start(update: Update, context: CallbackContext):
         await update.callback_query.answer()
         message = update.callback_query.message
         if message:
-            await message.edit_text('Введите название новой задачи:', reply_markup=build_cancel_keyboard())
+            try:
+                await message.edit_text('Введите название новой задачи:', reply_markup=build_cancel_keyboard())
+            except Exception:
+                logger.exception('Failed to edit message')
     else:
-        sent = await update.message.reply_text('Введите название новой задачи:', reply_markup=build_cancel_keyboard())
-        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+        try:
+            sent = await update.message.reply_text('Введите название новой задачи:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to send reply')
+        else:
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return ADD_TASK_TITLE
 
 async def add_task_category(update: Update, context: CallbackContext):
@@ -255,8 +305,12 @@ async def add_task_category(update: Update, context: CallbackContext):
     context.user_data['new_title'] = update.message.text
     categories = load_categories()
     markup = build_category_keyboard(categories)
-    sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return ADD_TASK_CATEGORY_CHOOSE
 
 
@@ -267,12 +321,18 @@ async def choose_task_category(update: Update, context: CallbackContext):
     data = query.data
     categories = load_categories()
     if data == 'new_category':
-        await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        try:
+            await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to edit message')
         return ADD_TASK_CATEGORY_INPUT
     index = int(data.split('_')[2])
     context.user_data['new_category'] = categories[index]
     markup = build_priority_keyboard()
-    await query.message.edit_text('Выберите приоритет:', reply_markup=markup)
+    try:
+        await query.message.edit_text('Выберите приоритет:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to edit message')
     return ADD_TASK_PRIORITY
 
 
@@ -285,8 +345,12 @@ async def add_task_category_input(update: Update, context: CallbackContext):
         save_categories(categories)
     context.user_data['new_category'] = new_cat
     markup = build_priority_keyboard()
-    sent = await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Выберите приоритет:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return ADD_TASK_PRIORITY
 
 
@@ -296,7 +360,10 @@ async def choose_task_priority(update: Update, context: CallbackContext):
     await query.answer()
     priority = query.data.split('_')[1]
     context.user_data['new_priority'] = priority
-    await query.message.edit_text('Введите теги через запятую (можно оставить пустым):', reply_markup=build_cancel_keyboard())
+    try:
+        await query.message.edit_text('Введите теги через запятую (можно оставить пустым):', reply_markup=build_cancel_keyboard())
+    except Exception:
+        logger.exception('Failed to edit message')
     return ADD_TASK_TAGS
 
 
@@ -319,8 +386,12 @@ async def add_task_tags(update: Update, context: CallbackContext):
         'comment': '',
     })
     save_tasks(tasks)
-    sent = await update.message.reply_text('Задача добавлена.')
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text('Задача добавлена.')
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await list_tasks(update, context)
     return ConversationHandler.END
 
@@ -342,10 +413,17 @@ async def categories_menu(update: Update, context: CallbackContext):
     markup = InlineKeyboardMarkup(keyboard)
     if message:
         if update.callback_query:
-            await message.edit_text('Категории:', reply_markup=markup)
+            try:
+                await message.edit_text('Категории:', reply_markup=markup)
+            except Exception:
+                logger.exception('Failed to edit message')
         else:
-            sent = await message.reply_text('Категории:', reply_markup=markup)
-            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+            try:
+                sent = await message.reply_text('Категории:', reply_markup=markup)
+            except Exception:
+                logger.exception('Failed to send reply')
+            else:
+                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return CATEGORY_MENU
 
 
@@ -353,10 +431,17 @@ async def category_add(update: Update, context: CallbackContext):
     print('DEBUG: category_add')
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        try:
+            await update.callback_query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to edit message')
     else:
-        sent = await update.message.reply_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
-        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+        try:
+            sent = await update.message.reply_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to send reply')
+        else:
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return CATEGORY_ADD
 
 
@@ -377,7 +462,10 @@ async def category_edit_start(update: Update, context: CallbackContext):
     await query.answer()
     idx = int(query.data.split('_')[1])
     context.user_data['cat_index'] = idx
-    await query.message.edit_text('Введите новое название категории:', reply_markup=build_cancel_keyboard())
+    try:
+        await query.message.edit_text('Введите новое название категории:', reply_markup=build_cancel_keyboard())
+    except Exception:
+        logger.exception('Failed to edit message')
     return CATEGORY_EDIT
 
 
@@ -422,10 +510,17 @@ async def filter_menu(update: Update, context: CallbackContext):
     markup = InlineKeyboardMarkup(keyboard)
     if message:
         if update.callback_query:
-            await message.edit_text('Фильтр задач:', reply_markup=markup)
+            try:
+                await message.edit_text('Фильтр задач:', reply_markup=markup)
+            except Exception:
+                logger.exception('Failed to edit message')
         else:
-            sent = await message.reply_text('Фильтр задач:', reply_markup=markup)
-            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+            try:
+                sent = await message.reply_text('Фильтр задач:', reply_markup=markup)
+            except Exception:
+                logger.exception('Failed to send reply')
+            else:
+                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return FILTER_MENU
 
 
@@ -435,7 +530,10 @@ async def filter_choose_category(update: Update, context: CallbackContext):
     await query.answer()
     categories = load_categories()
     markup = build_filter_category_keyboard(categories)
-    await query.message.edit_text('Выберите категорию:', reply_markup=markup)
+    try:
+        await query.message.edit_text('Выберите категорию:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to edit message')
     return FILTER_MENU
 
 
@@ -444,7 +542,10 @@ async def filter_choose_priority(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     markup = build_filter_priority_keyboard()
-    await query.message.edit_text('Выберите приоритет:', reply_markup=markup)
+    try:
+        await query.message.edit_text('Выберите приоритет:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to edit message')
     return FILTER_MENU
 
 
@@ -454,7 +555,10 @@ async def filter_choose_tag(update: Update, context: CallbackContext):
     await query.answer()
     tags = load_active_tags()
     markup = build_filter_tag_keyboard(tags)
-    await query.message.edit_text('Выберите тег:', reply_markup=markup)
+    try:
+        await query.message.edit_text('Выберите тег:', reply_markup=markup)
+    except Exception:
+        logger.exception('Failed to edit message')
     return FILTER_MENU
 
 
@@ -514,10 +618,17 @@ async def settings_menu(update: Update, context: CallbackContext):
     markup = InlineKeyboardMarkup(keyboard)
     if message:
         if update.callback_query:
-            await message.edit_text("Настройки напоминаний:", reply_markup=markup)
+            try:
+                await message.edit_text("Настройки напоминаний:", reply_markup=markup)
+            except Exception:
+                logger.exception('Failed to edit message')
         else:
-            sent = await message.reply_text("Настройки напоминаний:", reply_markup=markup)
-            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+            try:
+                sent = await message.reply_text("Настройки напоминаний:", reply_markup=markup)
+            except Exception:
+                logger.exception('Failed to send reply')
+            else:
+                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return SETTINGS_MENU
 
 
@@ -525,10 +636,17 @@ async def settings_set_time(update: Update, context: CallbackContext):
     print('DEBUG: settings_set_time')
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.edit_text("Введите время в формате ЧЧ:ММ", reply_markup=build_cancel_keyboard())
+        try:
+            await update.callback_query.message.edit_text("Введите время в формате ЧЧ:ММ", reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to edit message')
     else:
-        sent = await update.message.reply_text("Введите время в формате ЧЧ:ММ", reply_markup=build_cancel_keyboard())
-        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+        try:
+            sent = await update.message.reply_text("Введите время в формате ЧЧ:ММ", reply_markup=build_cancel_keyboard())
+        except Exception:
+            logger.exception('Failed to send reply')
+        else:
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return SETTINGS_TIME
 
 
@@ -540,12 +658,20 @@ async def settings_save_time(update: Update, context: CallbackContext):
         if not (0 <= hour < 24 and 0 <= minute < 60):
             raise ValueError
     except Exception:
-        sent = await update.message.reply_text("Неверный формат времени, попробуйте ещё раз.")
-        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+        try:
+            sent = await update.message.reply_text("Неверный формат времени, попробуйте ещё раз.")
+        except Exception:
+            logger.exception('Failed to send reply')
+        else:
+            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
         return SETTINGS_TIME
     save_setting("reminder_time", f"{hour:02d}:{minute:02d}")
-    sent = await update.message.reply_text("Время напоминания обновлено.")
-    context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+    try:
+        sent = await update.message.reply_text("Время напоминания обновлено.")
+    except Exception:
+        logger.exception('Failed to send reply')
+    else:
+        context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     schedule_reminder_job(context.application)
     return await settings_menu(update, context)
 
@@ -563,10 +689,17 @@ async def toggle_weekends(update: Update, context: CallbackContext):
     schedule_reminder_job(context.application)
     if message:
         if update.callback_query:
-            await message.edit_text("Настройки обновлены.")
+            try:
+                await message.edit_text("Настройки обновлены.")
+            except Exception:
+                logger.exception('Failed to edit message')
         else:
-            sent = await message.reply_text("Настройки обновлены.")
-            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+            try:
+                sent = await message.reply_text("Настройки обновлены.")
+            except Exception:
+                logger.exception('Failed to send reply')
+            else:
+                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     return await settings_menu(update, context)
 
 
@@ -577,10 +710,17 @@ async def cancel(update: Update, context: CallbackContext):
         await update.callback_query.answer()
     if message:
         if update.callback_query:
-            await message.edit_text('Действие отменено.')
+            try:
+                await message.edit_text('Действие отменено.')
+            except Exception:
+                logger.exception('Failed to edit message')
         else:
-            sent = await message.reply_text('Действие отменено.')
-            context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
+            try:
+                sent = await message.reply_text('Действие отменено.')
+            except Exception:
+                logger.exception('Failed to send reply')
+            else:
+                context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
     await start(update, context)
     return ConversationHandler.END
 
