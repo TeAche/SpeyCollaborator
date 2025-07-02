@@ -9,6 +9,7 @@ def build_cancel_keyboard(text: str = 'Отмена') -> InlineKeyboardMarkup:
 def build_keyboard(tasks, include_add_button: bool = False, include_back_button: bool = False) -> InlineKeyboardMarkup | None:
     print('DEBUG: build_keyboard')
     keyboard = []
+    print(f'DEBUG: build_keyboard received {len(tasks)} tasks')
     for task in tasks:
         if not task.get('done'):
             keyboard.append([
@@ -28,13 +29,16 @@ def build_keyboard(tasks, include_add_button: bool = False, include_back_button:
     if include_back_button:
         keyboard.append([InlineKeyboardButton('Назад', callback_data='cancel')])
     if keyboard:
+        print(f'DEBUG: build_keyboard -> {len(keyboard)} rows')
         return InlineKeyboardMarkup(keyboard)
+    print('WARNING: build_keyboard produced empty keyboard')
     return InlineKeyboardMarkup([[InlineKeyboardButton('Добавить задачу', callback_data='add_task')]]) if include_add_button else None
 
 
 def build_completed_keyboard(tasks, include_back_button: bool = False) -> InlineKeyboardMarkup | None:
     print('DEBUG: build_completed_keyboard')
     keyboard = []
+    print(f'DEBUG: build_completed_keyboard received {len(tasks)} tasks')
     for task in tasks:
         if task.get('done'):
             keyboard.append([
@@ -47,6 +51,7 @@ def build_completed_keyboard(tasks, include_back_button: bool = False) -> Inline
     if include_back_button:
         keyboard.append([InlineKeyboardButton('Назад', callback_data='cancel')])
     if keyboard:
+        print(f'DEBUG: build_completed_keyboard -> {len(keyboard)} rows')
         return InlineKeyboardMarkup(keyboard)
     return None
 

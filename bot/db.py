@@ -103,6 +103,9 @@ def load_tasks():
         t["tags"] = [r[0] for r in rows]
         t["done"] = bool(t["done"])
     conn.close()
+    print(f"DEBUG: load_tasks -> {len(tasks)} tasks")
+    if not tasks:
+        print("WARNING: load_tasks returned empty list")
     return tasks
 
 
@@ -135,7 +138,11 @@ def load_categories():
     conn = sqlite3.connect(DB_FILE)
     rows = conn.execute("SELECT name FROM categories ORDER BY name").fetchall()
     conn.close()
-    return [r[0] for r in rows]
+    categories = [r[0] for r in rows]
+    print(f"DEBUG: load_categories -> {len(categories)} categories")
+    if not categories:
+        print("WARNING: load_categories returned empty list")
+    return categories
 
 
 def save_categories(categories):
@@ -153,7 +160,11 @@ def load_tags():
     conn = sqlite3.connect(DB_FILE)
     rows = conn.execute("SELECT name FROM tags ORDER BY name").fetchall()
     conn.close()
-    return [r[0] for r in rows]
+    tags = [r[0] for r in rows]
+    print(f"DEBUG: load_tags -> {len(tags)} tags")
+    if not tags:
+        print("WARNING: load_tags returned empty list")
+    return tags
 
 
 def load_active_tags():
@@ -168,7 +179,11 @@ def load_active_tags():
         """
     ).fetchall()
     conn.close()
-    return [r[0] for r in rows]
+    tags = [r[0] for r in rows]
+    print(f"DEBUG: load_active_tags -> {len(tags)} tags")
+    if not tags:
+        print("WARNING: load_active_tags returned empty list")
+    return tags
 
 
 def load_settings():
@@ -177,7 +192,11 @@ def load_settings():
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
-    return {row["key"]: row["value"] for row in rows}
+    settings = {row["key"]: row["value"] for row in rows}
+    print(f"DEBUG: load_settings -> {len(settings)} entries")
+    if not settings:
+        print("WARNING: load_settings returned empty dict")
+    return settings
 
 
 def save_setting(key, value):

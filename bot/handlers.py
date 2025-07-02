@@ -55,6 +55,7 @@ async def start(update: Update, context: CallbackContext):
 async def list_tasks(update: Update, context: CallbackContext):
     print('DEBUG: list_tasks')
     tasks = load_tasks()
+    print(f'DEBUG: list_tasks loaded {len(tasks)} tasks')
     filters_data = context.user_data.get('filters', {})
     category = filters_data.get('category')
     priority = filters_data.get('priority')
@@ -65,6 +66,9 @@ async def list_tasks(update: Update, context: CallbackContext):
         tasks = [t for t in tasks if t.get('priority') == priority]
     if tag:
         tasks = [t for t in tasks if tag in t.get('tags', [])]
+    print(f'DEBUG: list_tasks after filtering -> {len(tasks)} tasks')
+    if not tasks:
+        print('WARNING: list_tasks resulting list is empty')
     markup = build_keyboard(tasks, include_add_button=True, include_back_button=True)
     text = 'Ваши задачи:' if tasks else 'Задач нет.'
     await reply_or_edit(update, context, text, reply_markup=markup)
@@ -222,6 +226,8 @@ async def save_comment(update: Update, context: CallbackContext):
             task['done'] = True
             task['comment'] = comment
             break
+    done_count = sum(1 for t in tasks if t.get('done'))
+    print(f'DEBUG: save_comment marked task {task_id} done. Done count {done_count}')
     save_tasks(tasks)
     try:
         sent = await update.message.reply_text('Задача сохранена.')
@@ -240,6 +246,7 @@ async def delete_task(update: Update, context: CallbackContext):
     task_id = int(query.data.split('_')[1])
     tasks = load_tasks()
     tasks = [t for t in tasks if t['id'] != task_id]
+    print(f'DEBUG: delete_task remaining {len(tasks)} tasks')
     save_tasks(tasks)
     if query.message:
         try:
@@ -259,6 +266,8 @@ async def restore_task(update: Update, context: CallbackContext):
         if task['id'] == task_id:
             task['done'] = False
             break
+    done_count = sum(1 for t in tasks if t.get('done'))
+    print(f'DEBUG: restore_task restored {task_id}. Done count {done_count}')
     save_tasks(tasks)
     if query.message:
         try:
@@ -385,6 +394,7 @@ async def add_task_tags(update: Update, context: CallbackContext):
         'done': False,
         'comment': '',
     })
+    print(f'DEBUG: add_task_tags added task id {new_id}. Total {len(tasks)} tasks')
     save_tasks(tasks)
     try:
         sent = await update.message.reply_text('Задача добавлена.')
@@ -404,6 +414,7 @@ async def categories_menu(update: Update, context: CallbackContext):
     else:
         message = update.message
     categories = load_categories()
+    print(f'DEBUG: categories_menu -> {len(categories)} categories')
     keyboard = [
         [InlineKeyboardButton(cat, callback_data=f'editcat_{i}'), InlineKeyboardButton('🗑️', callback_data=f'delcat_{i}')]
         for i, cat in enumerate(categories)
