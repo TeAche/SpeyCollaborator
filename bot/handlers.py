@@ -30,6 +30,8 @@ async def start(update: Update, context: CallbackContext):
     if update.callback_query:
         await update.callback_query.answer()
     chat_id = update.effective_chat.id
+    # Clear any saved filters to avoid showing a filtered task list
+    context.user_data['filters'] = {}
     for mid in context.chat_data.get('bot_messages', set()):
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=mid)
