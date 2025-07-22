@@ -7,10 +7,18 @@ from telegram.ext import ApplicationBuilder, CallbackContext, CallbackQueryHandl
 from .config import BOT_TOKEN, OWNER_CHAT_ID
 from .constants import *
 from .db import (
-    init_db, load_tasks, save_tasks,
-    load_categories, save_categories,
-    load_tags, load_active_tags,
-    load_settings, save_setting
+    init_db,
+    load_tasks,
+    save_tasks,
+    load_categories,
+    save_categories,
+    load_tags,
+    load_active_tags,
+    load_settings,
+    save_setting,
+    register_user,
+    get_next_task_id,
+    get_all_users,
 )
 from .keyboards import (
     build_keyboard, build_completed_keyboard, build_category_keyboard,
@@ -21,18 +29,25 @@ from .keyboards import (
 from .utils import schedule_reminder_job, reply_or_edit, send_and_store
 
 
-async def send_daily_tasks(context: CallbackContext):
+async def send_daily_tasks(context: CallbackContext, user_id: int | None = None):
     print("DEBUG: send_daily_tasks")
-    tasks = load_tasks()
+    if user_id is None:
+        if getattr(context, "job", None) and context.job.data:
+            user_id = context.job.data.get("user_id", OWNER_CHAT_ID)
+        else:
+            user_id = OWNER_CHAT_ID
+    tasks = load_tasks(user_id)
     markup = build_keyboard(tasks)
     text = 'Задачи на сегодня:' if markup else 'На сегодня задач нет.'
-    await send_and_store(context, OWNER_CHAT_ID, text, reply_markup=markup)
+    await send_and_store(context, user_id, text, reply_markup=markup)
 
 async def start(update: Update, context: CallbackContext):
     print('DEBUG: start')
     if update.callback_query:
         await update.callback_query.answer()
     chat_id = update.effective_chat.id
+    register_user(chat_id, update.effective_user.full_name)
+    schedule_reminder_job(context.application)
     # Clear any saved filters to avoid showing a filtered task list
     context.user_data['filters'] = {}
     for mid in context.chat_data.get('bot_messages', set()):
@@ -54,7 +69,8 @@ async def start(update: Update, context: CallbackContext):
 
 async def list_tasks(update: Update, context: CallbackContext):
     print('DEBUG: list_tasks')
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     print(f'DEBUG: list_tasks loaded {len(tasks)} tasks')
     filters_data = context.user_data.get('filters', {})
     category = filters_data.get('category')
@@ -76,7 +92,8 @@ async def list_tasks(update: Update, context: CallbackContext):
 
 async def list_completed(update: Update, context: CallbackContext):
     print('DEBUG: list_completed')
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     markup = build_completed_keyboard(tasks, include_back_button=True)
     text = 'Выполненные задачи:' if markup else 'Выполненных задач нет.'
     await reply_or_edit(update, context, text, reply_markup=markup)
@@ -103,7 +120,8 @@ async def edit_task_start(update: Update, context: CallbackContext):
     await query.answer()
     task_id = int(query.data.split('_')[1])
     context.user_data['edit_id'] = task_id
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     title = next((t['title'] for t in tasks if t['id'] == task_id), '')
     message = query.message
     if message:
@@ -117,7 +135,8 @@ async def edit_task_start(update: Update, context: CallbackContext):
 async def edit_task_category(update: Update, context: CallbackContext):
     print('DEBUG: edit_task_category')
     context.user_data['edit_title'] = update.message.text
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     markup = build_category_keyboard(categories)
     try:
         sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
@@ -133,7 +152,8 @@ async def choose_edit_category(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     data = query.data
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if data == 'new_category':
         try:
             await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
@@ -153,10 +173,11 @@ async def choose_edit_category(update: Update, context: CallbackContext):
 async def edit_task_category_input(update: Update, context: CallbackContext):
     print('DEBUG: edit_task_category_input')
     new_cat = update.message.text
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if new_cat not in categories:
         categories.append(new_cat)
-        save_categories(categories)
+        save_categories(chat_id, categories)
     context.user_data['edit_category'] = new_cat
     markup = build_priority_keyboard()
     try:
@@ -175,14 +196,15 @@ async def choose_edit_priority(update: Update, context: CallbackContext):
     priority = query.data.split('_')[1]
     context.user_data['edit_priority'] = priority
     task_id = context.user_data.get('edit_id')
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     for task in tasks:
         if task['id'] == task_id:
             task['title'] = context.user_data.get('edit_title')
             task['category'] = context.user_data.get('edit_category')
             task['priority'] = context.user_data.get('edit_priority')
             break
-    save_tasks(tasks)
+    save_tasks(chat_id, tasks)
     try:
         await query.message.edit_text('Задача обновлена.')
     except Exception:
@@ -196,7 +218,8 @@ async def add_tags_to_task(update: Update, context: CallbackContext):
     tags_text = update.message.text.strip()
     tags = [t.strip() for t in tags_text.split(',') if t.strip()] if tags_text else []
     task_id = context.user_data.get('tag_id')
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     for task in tasks:
         if task['id'] == task_id:
             current_tags = task.get('tags', [])
@@ -205,7 +228,7 @@ async def add_tags_to_task(update: Update, context: CallbackContext):
                     current_tags.append(tag)
             task['tags'] = current_tags
             break
-    save_tasks(tasks)
+    save_tasks(chat_id, tasks)
     try:
         sent = await update.message.reply_text('Теги добавлены.')
     except Exception:
@@ -220,7 +243,8 @@ async def save_comment(update: Update, context: CallbackContext):
     print('DEBUG: save_comment')
     comment = update.message.text
     task_id = context.user_data.get('task_id')
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     for task in tasks:
         if task['id'] == task_id:
             task['done'] = True
@@ -228,14 +252,14 @@ async def save_comment(update: Update, context: CallbackContext):
             break
     done_count = sum(1 for t in tasks if t.get('done'))
     print(f'DEBUG: save_comment marked task {task_id} done. Done count {done_count}')
-    save_tasks(tasks)
+    save_tasks(chat_id, tasks)
     try:
         sent = await update.message.reply_text('Задача сохранена.')
     except Exception:
         logger.exception('Failed to send reply')
     else:
         context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
-    await send_daily_tasks(context)
+    await send_daily_tasks(context, chat_id)
     return ConversationHandler.END
 
 
@@ -244,10 +268,11 @@ async def delete_task(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     task_id = int(query.data.split('_')[1])
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     tasks = [t for t in tasks if t['id'] != task_id]
     print(f'DEBUG: delete_task remaining {len(tasks)} tasks')
-    save_tasks(tasks)
+    save_tasks(chat_id, tasks)
     if query.message:
         try:
             await query.message.edit_text('Задача удалена.')
@@ -261,14 +286,15 @@ async def restore_task(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     task_id = int(query.data.split('_')[1])
-    tasks = load_tasks()
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
     for task in tasks:
         if task['id'] == task_id:
             task['done'] = False
             break
     done_count = sum(1 for t in tasks if t.get('done'))
     print(f'DEBUG: restore_task restored {task_id}. Done count {done_count}')
-    save_tasks(tasks)
+    save_tasks(chat_id, tasks)
     if query.message:
         try:
             await query.message.edit_text('Задача восстановлена.')
@@ -312,7 +338,8 @@ async def add_task_start(update: Update, context: CallbackContext):
 async def add_task_category(update: Update, context: CallbackContext):
     print('DEBUG: add_task_category')
     context.user_data['new_title'] = update.message.text
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     markup = build_category_keyboard(categories)
     try:
         sent = await update.message.reply_text('Выберите категорию:', reply_markup=markup)
@@ -328,7 +355,8 @@ async def choose_task_category(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     data = query.data
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if data == 'new_category':
         try:
             await query.message.edit_text('Введите название новой категории:', reply_markup=build_cancel_keyboard())
@@ -348,10 +376,11 @@ async def choose_task_category(update: Update, context: CallbackContext):
 async def add_task_category_input(update: Update, context: CallbackContext):
     print('DEBUG: add_task_category_input')
     new_cat = update.message.text
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if new_cat not in categories:
         categories.append(new_cat)
-        save_categories(categories)
+        save_categories(chat_id, categories)
     context.user_data['new_category'] = new_cat
     markup = build_priority_keyboard()
     try:
@@ -383,8 +412,9 @@ async def add_task_tags(update: Update, context: CallbackContext):
     title = context.user_data.get('new_title')
     category = context.user_data.get('new_category')
     priority = context.user_data.get('new_priority')
-    tasks = load_tasks()
-    new_id = max([t['id'] for t in tasks], default=0) + 1
+    chat_id = update.effective_chat.id
+    tasks = load_tasks(chat_id)
+    new_id = get_next_task_id()
     tasks.append({
         'id': new_id,
         'title': title,
@@ -395,7 +425,7 @@ async def add_task_tags(update: Update, context: CallbackContext):
         'comment': '',
     })
     print(f'DEBUG: add_task_tags added task id {new_id}. Total {len(tasks)} tasks')
-    save_tasks(tasks)
+    save_tasks(chat_id, tasks)
     try:
         sent = await update.message.reply_text('Задача добавлена.')
     except Exception:
@@ -413,7 +443,8 @@ async def categories_menu(update: Update, context: CallbackContext):
         message = update.callback_query.message
     else:
         message = update.message
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     print(f'DEBUG: categories_menu -> {len(categories)} categories')
     keyboard = [
         [InlineKeyboardButton(cat, callback_data=f'editcat_{i}'), InlineKeyboardButton('🗑️', callback_data=f'delcat_{i}')]
@@ -459,10 +490,11 @@ async def category_add(update: Update, context: CallbackContext):
 async def save_new_category(update: Update, context: CallbackContext):
     print('DEBUG: save_new_category')
     name = update.message.text
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if name not in categories:
         categories.append(name)
-        save_categories(categories)
+        save_categories(chat_id, categories)
     await categories_menu(update, context)
     return CATEGORY_MENU
 
@@ -483,10 +515,11 @@ async def category_edit_start(update: Update, context: CallbackContext):
 async def save_edited_category(update: Update, context: CallbackContext):
     print('DEBUG: save_edited_category')
     idx = context.user_data.get('cat_index')
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if 0 <= idx < len(categories):
         categories[idx] = update.message.text
-        save_categories(categories)
+        save_categories(chat_id, categories)
     await categories_menu(update, context)
     return CATEGORY_MENU
 
@@ -496,10 +529,11 @@ async def delete_category(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     idx = int(query.data.split('_')[1])
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     if 0 <= idx < len(categories):
         categories.pop(idx)
-        save_categories(categories)
+        save_categories(chat_id, categories)
     await categories_menu(update, context)
     return CATEGORY_MENU
 
@@ -539,7 +573,8 @@ async def filter_choose_category(update: Update, context: CallbackContext):
     print('DEBUG: filter_choose_category')
     query = update.callback_query
     await query.answer()
-    categories = load_categories()
+    chat_id = update.effective_chat.id
+    categories = load_categories(chat_id)
     markup = build_filter_category_keyboard(categories)
     try:
         await query.message.edit_text('Выберите категорию:', reply_markup=markup)
@@ -564,7 +599,8 @@ async def filter_choose_tag(update: Update, context: CallbackContext):
     print('DEBUG: filter_choose_tag')
     query = update.callback_query
     await query.answer()
-    tags = load_active_tags()
+    chat_id = update.effective_chat.id
+    tags = load_active_tags(chat_id)
     markup = build_filter_tag_keyboard(tags)
     try:
         await query.message.edit_text('Выберите тег:', reply_markup=markup)
@@ -578,13 +614,14 @@ async def filter_set(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     data = query.data
+    chat_id = update.effective_chat.id
     filters_data = context.user_data.setdefault('filters', {})
     if data.startswith('fcat_'):
         if data == 'fcat_none':
             filters_data.pop('category', None)
         else:
             index = int(data.split('_')[1])
-            categories = load_categories()
+            categories = load_categories(chat_id)
             if 0 <= index < len(categories):
                 filters_data['category'] = categories[index]
     elif data.startswith('fprio_'):
@@ -597,7 +634,7 @@ async def filter_set(update: Update, context: CallbackContext):
             filters_data.pop('tag', None)
         else:
             index = int(data.split('_')[1])
-            tags = load_active_tags()
+            tags = load_active_tags(chat_id)
             if 0 <= index < len(tags):
                 filters_data['tag'] = tags[index]
     elif data == 'filter_reset':
@@ -613,7 +650,8 @@ async def settings_menu(update: Update, context: CallbackContext):
         message = update.callback_query.message
     else:
         message = update.message
-    settings = load_settings()
+    chat_id = update.effective_chat.id
+    settings = load_settings(chat_id)
     time_str = settings.get("reminder_time", "09:00")
     weekends = settings.get("notify_weekends", "0") == "1"
     keyboard = [
@@ -676,7 +714,8 @@ async def settings_save_time(update: Update, context: CallbackContext):
         else:
             context.chat_data.setdefault('bot_messages', set()).add(sent.message_id)
         return SETTINGS_TIME
-    save_setting("reminder_time", f"{hour:02d}:{minute:02d}")
+    chat_id = update.effective_chat.id
+    save_setting(chat_id, "reminder_time", f"{hour:02d}:{minute:02d}")
     try:
         sent = await update.message.reply_text("Время напоминания обновлено.")
     except Exception:
@@ -694,9 +733,10 @@ async def toggle_weekends(update: Update, context: CallbackContext):
         message = update.callback_query.message
     else:
         message = update.message
-    settings = load_settings()
+    chat_id = update.effective_chat.id
+    settings = load_settings(chat_id)
     current = settings.get("notify_weekends", "0") == "1"
-    save_setting("notify_weekends", "0" if current else "1")
+    save_setting(chat_id, "notify_weekends", "0" if current else "1")
     schedule_reminder_job(context.application)
     if message:
         if update.callback_query:

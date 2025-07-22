@@ -5,7 +5,7 @@ from telegram.ext import Application
 
 logger = logging.getLogger(__name__)
 
-from .db import load_settings
+from .db import load_settings, get_all_users
 
 
 def schedule_reminder_job(application: Application):
@@ -15,17 +15,19 @@ def schedule_reminder_job(application: Application):
         return
     for job in application.job_queue.get_jobs_by_name("daily"):
         job.schedule_removal()
-    settings = load_settings()
-    time_str = settings.get("reminder_time", "09:00")
-    hour, minute = map(int, time_str.split(":"))
-    notify_weekends = settings.get("notify_weekends", "0") == "1"
-    days = (0, 1, 2, 3, 4, 5, 6) if notify_weekends else (0, 1, 2, 3, 4)
-    application.job_queue.run_daily(
-        send_daily_tasks,
-        time(hour=hour, minute=minute),
-        days=days,
-        name="daily",
-    )
+    for user_id in get_all_users():
+        settings = load_settings(user_id)
+        time_str = settings.get("reminder_time", "09:00")
+        hour, minute = map(int, time_str.split(":"))
+        notify_weekends = settings.get("notify_weekends", "0") == "1"
+        days = (0, 1, 2, 3, 4, 5, 6) if notify_weekends else (0, 1, 2, 3, 4)
+        application.job_queue.run_daily(
+            send_daily_tasks,
+            time(hour=hour, minute=minute),
+            days=days,
+            name=f"daily_{user_id}",
+            data={"user_id": user_id},
+        )
 
 
 async def send_and_store(context, chat_id: int, text: str, reply_markup=None):
