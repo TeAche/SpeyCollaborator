@@ -4,7 +4,7 @@ logger = logging.getLogger(__name__)
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CallbackContext, CallbackQueryHandler, CommandHandler, ConversationHandler, MessageHandler, filters
 
-from .config import BOT_TOKEN, OWNER_CHAT_ID
+from .config import BOT_TOKEN
 from .constants import *
 from .db import (
     init_db,
@@ -29,13 +29,14 @@ from .keyboards import (
 from .utils import schedule_reminder_job, reply_or_edit, send_and_store
 
 
-async def send_daily_tasks(context: CallbackContext, user_id: int | None = None):
+async def send_daily_tasks(context: CallbackContext, user_id: int):
     print("DEBUG: send_daily_tasks")
     if user_id is None:
-        if getattr(context, "job", None) and context.job.data:
-            user_id = context.job.data.get("user_id", OWNER_CHAT_ID)
-        else:
-            user_id = OWNER_CHAT_ID
+        logger.error("user_id is required for send_daily_tasks")
+        return
+    if user_id not in get_all_users():
+        logger.error("send_daily_tasks called for unregistered user %s", user_id)
+        return
     tasks = load_tasks(user_id)
     markup = build_keyboard(tasks)
     text = 'Задачи на сегодня:' if markup else 'На сегодня задач нет.'
