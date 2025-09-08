@@ -3,7 +3,7 @@ import os
 import sqlite3
 from datetime import time
 
-from .config import TASKS_FILE, CATEGORIES_FILE, DB_FILE, OWNER_CHAT_ID
+from .config import CATEGORIES_FILE, DB_FILE, OWNER_CHAT_ID, TASKS_TEMPLATE_FILE
 from .constants import *
 
 
@@ -82,6 +82,44 @@ def init_db():
     conn.close()
 
 
+def import_tasks_from_template(user_id: int):
+    print("DEBUG: import_tasks_from_template")
+    if not os.path.exists(TASKS_TEMPLATE_FILE):
+        print("WARNING: tasks template not found")
+        return
+    with open(TASKS_TEMPLATE_FILE, "r", encoding="utf-8") as f:
+        tasks = json.load(f)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    row = c.execute("SELECT MAX(id) FROM tasks").fetchone()
+    next_id = (row[0] or 0) + 1
+    for t in tasks:
+        c.execute(
+            "INSERT INTO tasks(id, user_id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                next_id,
+                user_id,
+                t["title"],
+                t.get("category"),
+                t.get("priority"),
+                int(t.get("done", False)),
+                t.get("comment", ""),
+            ),
+        )
+        for tag in t.get("tags", []):
+            c.execute(
+                "INSERT OR IGNORE INTO tags(user_id, name) VALUES (?, ?)",
+                (user_id, tag),
+            )
+            c.execute(
+                "INSERT INTO task_tags(task_id, tag) VALUES (?, ?)",
+                (next_id, tag),
+            )
+        next_id += 1
+    conn.commit()
+    conn.close()
+
+
 def register_user(user_id: int, name: str | None = None):
     """Ensure user exists and has default data."""
     conn = sqlite3.connect(DB_FILE)
@@ -112,32 +150,11 @@ def register_user(user_id: int, name: str | None = None):
                 )
     # default tasks
     c.execute("SELECT COUNT(*) FROM tasks WHERE user_id=?", (user_id,))
-    if c.fetchone()[0] == 0 and os.path.exists(TASKS_FILE) and user_id == OWNER_CHAT_ID:
-        with open(TASKS_FILE, "r", encoding="utf-8") as f:
-            for t in json.load(f):
-                c.execute(
-                    "INSERT INTO tasks(id, user_id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        t["id"],
-                        user_id,
-                        t["title"],
-                        t.get("category"),
-                        t.get("priority"),
-                        int(t.get("done", False)),
-                        t.get("comment", ""),
-                    ),
-                )
-                for tag in t.get("tags", []):
-                    c.execute(
-                        "INSERT OR IGNORE INTO tags(user_id, name) VALUES (?, ?)",
-                        (user_id, tag),
-                    )
-                    c.execute(
-                        "INSERT OR IGNORE INTO task_tags(task_id, tag) VALUES (?, ?)",
-                        (t["id"], tag),
-                    )
+    has_tasks = c.fetchone()[0] > 0
     conn.commit()
     conn.close()
+    if not has_tasks:
+        import_tasks_from_template(user_id)
 
 
 def get_all_users():
