@@ -8,8 +8,8 @@ load_dotenv()
 # current working directory.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-TASKS_FILE = str(BASE_DIR / 'tasks.json')
 CATEGORIES_FILE = str(BASE_DIR / 'categories.json')
+TASKS_TEMPLATE_FILE = str(BASE_DIR / 'tasks_template.json')
 DB_FILE = str(BASE_DIR / 'tasks.db')
 BOT_TOKEN = os.getenv('TOKEN', 'PLACEHOLDER_TOKEN')
 OWNER_CHAT_ID = int(os.getenv('OWNER_CHAT_ID', '123456789'))
