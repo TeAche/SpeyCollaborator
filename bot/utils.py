@@ -1,4 +1,5 @@
 from datetime import time
+from functools import partial
 from telegram import Update
 import logging
 from telegram.ext import Application
@@ -22,11 +23,10 @@ def schedule_reminder_job(application: Application):
         notify_weekends = settings.get("notify_weekends", "0") == "1"
         days = (0, 1, 2, 3, 4, 5, 6) if notify_weekends else (0, 1, 2, 3, 4)
         application.job_queue.run_daily(
-            send_daily_tasks,
+            partial(send_daily_tasks, user_id=user_id),
             time(hour=hour, minute=minute),
             days=days,
             name=f"daily_{user_id}",
-            data={"user_id": user_id},
         )
 
 
