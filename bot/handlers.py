@@ -414,7 +414,7 @@ async def add_task_tags(update: Update, context: CallbackContext):
     priority = context.user_data.get('new_priority')
     chat_id = update.effective_chat.id
     tasks = load_tasks(chat_id)
-    new_id = get_next_task_id()
+    new_id = get_next_task_id(chat_id)
     tasks.append({
         'id': new_id,
         'title': title,

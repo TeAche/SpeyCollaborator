@@ -147,9 +147,9 @@ def get_all_users():
     return [r[0] for r in rows]
 
 
-def get_next_task_id() -> int:
+def get_next_task_id(user_id: int) -> int:
     conn = sqlite3.connect(DB_FILE)
-    row = conn.execute("SELECT MAX(id) FROM tasks").fetchone()
+    row = conn.execute("SELECT MAX(id) FROM tasks WHERE user_id=?", (user_id,)).fetchone()
     conn.close()
     return (row[0] or 0) + 1
 
@@ -185,10 +185,12 @@ def save_tasks(user_id: int, tasks):
         (user_id,),
     )
     for t in tasks:
+        task_id = t.get("id") or get_next_task_id(user_id)
+        t["id"] = task_id
         conn.execute(
             "INSERT INTO tasks(id, user_id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                t["id"],
+                task_id,
                 user_id,
                 t["title"],
                 t.get("category"),
@@ -204,7 +206,7 @@ def save_tasks(user_id: int, tasks):
             )
             conn.execute(
                 "INSERT INTO task_tags(task_id, tag) VALUES (?, ?)",
-                (t["id"], tag),
+                (task_id, tag),
             )
     conn.commit()
     conn.close()
