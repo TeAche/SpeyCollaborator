@@ -38,8 +38,17 @@ async def send_daily_tasks(context: CallbackContext, user_id: int):
         logger.error("send_daily_tasks called for unregistered user %s", user_id)
         return
     tasks = load_tasks(user_id)
-    markup = build_keyboard(tasks)
-    text = 'Задачи на сегодня:' if markup else 'На сегодня задач нет.'
+    active_tasks = [t for t in tasks if not t.get('done')]
+    total_pages = max(1, (len(active_tasks) + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
+    page = 0
+    tasks_page = active_tasks[:TASKS_PER_PAGE]
+    show_pagination = len(active_tasks) > TASKS_PER_PAGE
+    markup = build_keyboard(
+        tasks_page,
+        page=page if show_pagination else None,
+        total_pages=total_pages if show_pagination else None,
+    )
+    text = 'Задачи на сегодня:' if active_tasks else 'На сегодня задач нет.'
     await send_and_store(context, user_id, text, reply_markup=markup)
 
 async def start(update: Update, context: CallbackContext):
@@ -51,6 +60,7 @@ async def start(update: Update, context: CallbackContext):
     schedule_reminder_job(context.application)
     # Clear any saved filters to avoid showing a filtered task list
     context.user_data['filters'] = {}
+    context.user_data['tasks_page'] = 0
     for mid in context.chat_data.get('bot_messages', set()):
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=mid)
@@ -83,12 +93,47 @@ async def list_tasks(update: Update, context: CallbackContext):
         tasks = [t for t in tasks if t.get('priority') == priority]
     if tag:
         tasks = [t for t in tasks if tag in t.get('tags', [])]
-    print(f'DEBUG: list_tasks after filtering -> {len(tasks)} tasks')
-    if not tasks:
+    active_tasks = [t for t in tasks if not t.get('done')]
+    print(f'DEBUG: list_tasks after filtering -> {len(active_tasks)} active tasks')
+    page = context.user_data.get('tasks_page', 0)
+    if update.message:
+        page = 0
+    elif update.callback_query:
+        data = update.callback_query.data
+        if data.startswith('tasks_page_'):
+            try:
+                page = int(data.split('_')[-1])
+            except ValueError:
+                page = 0
+        elif data == 'show_tasks':
+            page = 0
+    total_pages = max(1, (len(active_tasks) + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
+    if page >= total_pages:
+        page = total_pages - 1
+    if page < 0:
+        page = 0
+    context.user_data['tasks_page'] = page
+    start_index = page * TASKS_PER_PAGE
+    end_index = start_index + TASKS_PER_PAGE
+    tasks_page = active_tasks[start_index:end_index]
+    show_pagination = len(active_tasks) > TASKS_PER_PAGE
+    if not active_tasks:
         print('WARNING: list_tasks resulting list is empty')
-    markup = build_keyboard(tasks, include_add_button=True, include_back_button=True)
-    text = 'Ваши задачи:' if tasks else 'Задач нет.'
+    markup = build_keyboard(
+        tasks_page,
+        include_add_button=True,
+        include_back_button=True,
+        page=page if show_pagination else None,
+        total_pages=total_pages if show_pagination else None,
+    )
+    text = 'Ваши задачи:' if active_tasks else 'Задач нет.'
     await reply_or_edit(update, context, text, reply_markup=markup)
+
+
+async def pagination_info(update: Update, context: CallbackContext):
+    print('DEBUG: pagination_info')
+    if update.callback_query:
+        await update.callback_query.answer()
 
 
 async def list_completed(update: Update, context: CallbackContext):
@@ -640,6 +685,7 @@ async def filter_set(update: Update, context: CallbackContext):
                 filters_data['tag'] = tags[index]
     elif data == 'filter_reset':
         context.user_data.pop('filters', None)
+    context.user_data['tasks_page'] = 0
     await list_tasks(update, context)
     return FILTER_MENU
 
@@ -785,6 +831,8 @@ def main():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler(['tasks', 'list'], list_tasks))
     application.add_handler(CallbackQueryHandler(list_tasks, pattern='^show_tasks$'))
+    application.add_handler(CallbackQueryHandler(list_tasks, pattern=r'^tasks_page_\d+$'))
+    application.add_handler(CallbackQueryHandler(pagination_info, pattern='^tasks_page_info$'))
 
     comment_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(task_selected, pattern=r'^task_')],
@@ -797,7 +845,7 @@ def main():
 
     add_conv = ConversationHandler(
         entry_points=[
-            CommandHandler('add', add_task_start),
+            CommandHandler(['add', 'new'], add_task_start),
             CallbackQueryHandler(add_task_start, pattern='^add_task$'),
         ],
         states={

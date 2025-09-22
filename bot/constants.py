@@ -18,3 +18,6 @@
     SETTINGS_TIME,
     FILTER_MENU,
 ) = range(17)
+
+
+TASKS_PER_PAGE = 10

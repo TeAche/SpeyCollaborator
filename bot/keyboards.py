@@ -6,7 +6,13 @@ def build_cancel_keyboard(text: str = 'Отмена') -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton(text, callback_data='cancel')]])
 
 
-def build_keyboard(tasks, include_add_button: bool = False, include_back_button: bool = False) -> InlineKeyboardMarkup | None:
+def build_keyboard(
+    tasks,
+    include_add_button: bool = False,
+    include_back_button: bool = False,
+    page: int | None = None,
+    total_pages: int | None = None,
+) -> InlineKeyboardMarkup | None:
     print('DEBUG: build_keyboard')
     keyboard = []
     print(f'DEBUG: build_keyboard received {len(tasks)} tasks')
@@ -24,6 +30,14 @@ def build_keyboard(tasks, include_add_button: bool = False, include_back_button:
                 InlineKeyboardButton('✏️', callback_data=f"edit_{task['id']}"),
                 InlineKeyboardButton('🗑️', callback_data=f"delete_{task['id']}"),
             ])
+    if page is not None and total_pages is not None and total_pages > 1:
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton('◀️', callback_data=f'tasks_page_{page - 1}'))
+        nav_row.append(InlineKeyboardButton(f'{page + 1}/{total_pages}', callback_data='tasks_page_info'))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton('▶️', callback_data=f'tasks_page_{page + 1}'))
+        keyboard.append(nav_row)
     if include_add_button:
         keyboard.append([InlineKeyboardButton('Добавить задачу', callback_data='add_task')])
     if include_back_button:
