@@ -112,7 +112,7 @@ def import_tasks_from_template(user_id: int):
                 (user_id, tag),
             )
             c.execute(
-                "INSERT INTO task_tags(task_id, tag) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO task_tags(task_id, tag) VALUES (?, ?)",
                 (next_id, tag),
             )
         next_id += 1
@@ -222,7 +222,7 @@ def save_tasks(user_id: int, tasks):
                 (user_id, tag),
             )
             conn.execute(
-                "INSERT INTO task_tags(task_id, tag) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO task_tags(task_id, tag) VALUES (?, ?)",
                 (task_id, tag),
             )
     conn.commit()
