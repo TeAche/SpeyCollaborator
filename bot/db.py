@@ -165,8 +165,16 @@ def get_all_users():
 
 
 def get_next_task_id(user_id: int) -> int:
+    """Return the next available task id in the database.
+
+    The task identifier is a global primary key in the ``tasks`` table, so we
+    must look at all rows instead of filtering by ``user_id``. Using a per-user
+    counter would lead to ``UNIQUE constraint failed`` errors as soon as two
+    users have tasks with the same id.
+    """
+
     conn = sqlite3.connect(DB_FILE)
-    row = conn.execute("SELECT MAX(id) FROM tasks WHERE user_id=?", (user_id,)).fetchone()
+    row = conn.execute("SELECT MAX(id) FROM tasks").fetchone()
     conn.close()
     return (row[0] or 0) + 1
 
@@ -196,15 +204,23 @@ def load_tasks(user_id: int):
 def save_tasks(user_id: int, tasks):
     print("DEBUG: save_tasks")
     conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM tasks WHERE user_id=?", (user_id,))
-    conn.execute(
+    cursor = conn.cursor()
+    row = cursor.execute("SELECT MAX(id) FROM tasks").fetchone()
+    next_id = (row[0] or 0) + 1
+    cursor.execute("DELETE FROM tasks WHERE user_id=?", (user_id,))
+    cursor.execute(
         "DELETE FROM task_tags WHERE task_id IN (SELECT id FROM tasks WHERE user_id=?)",
         (user_id,),
     )
     for t in tasks:
-        task_id = t.get("id") or get_next_task_id(user_id)
+        task_id = t.get("id")
+        if task_id is None:
+            task_id = next_id
+            next_id += 1
+        else:
+            next_id = max(next_id, task_id + 1)
         t["id"] = task_id
-        conn.execute(
+        cursor.execute(
             "INSERT INTO tasks(id, user_id, title, category, priority, done, comment) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
@@ -217,11 +233,11 @@ def save_tasks(user_id: int, tasks):
             ),
         )
         for tag in t.get("tags", []):
-            conn.execute(
+            cursor.execute(
                 "INSERT OR IGNORE INTO tags(user_id, name) VALUES (?, ?)",
                 (user_id, tag),
             )
-            conn.execute(
+            cursor.execute(
                 "INSERT OR IGNORE INTO task_tags(task_id, tag) VALUES (?, ?)",
                 (task_id, tag),
             )
