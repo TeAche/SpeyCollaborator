@@ -14,9 +14,9 @@ def schedule_reminder_job(application: Application):
     from .handlers import send_daily_tasks  # local import to avoid circular
     if not application.job_queue:
         return
-    for job in application.job_queue.get_jobs_by_name("daily"):
-        job.schedule_removal()
     for user_id in get_all_users():
+        for job in application.job_queue.get_jobs_by_name(f"daily_{user_id}"):
+            job.schedule_removal()
         settings = load_settings(user_id)
         time_str = settings.get("reminder_time", "09:00")
         hour, minute = map(int, time_str.split(":"))
