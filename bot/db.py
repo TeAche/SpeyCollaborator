@@ -1,11 +1,18 @@
 import json
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
+from psycopg import errors
 from psycopg.rows import dict_row
 
-from .config import CATEGORIES_FILE, OWNER_CHAT_ID, TASKS_TEMPLATE_FILE, DATABASE_URL
+from .config import CATEGORIES_FILE, DATABASE_URL, OWNER_CHAT_ID, TASKS_TEMPLATE_FILE
+
+PRIORITY_TO_VALUE = {"низкий": 0, "средний": 1, "высокий": 2}
+VALUE_TO_PRIORITY = {v: k for k, v in PRIORITY_TO_VALUE.items()}
+DEFAULT_PRIORITY_VALUE = 1
+DEFAULT_STATUS = "active"
 
 
 def _conn():
@@ -14,59 +21,80 @@ def _conn():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
+def _priority_to_db(priority: str | None) -> int | None:
+    if priority is None:
+        return None
+    return PRIORITY_TO_VALUE.get(priority, DEFAULT_PRIORITY_VALUE)
+
+
+def _priority_from_db(value: int | None) -> str | None:
+    if value is None:
+        return None
+    return VALUE_TO_PRIORITY.get(int(value), "средний")
+
+
+def _next_task_id(cursor) -> int:
+    row = cursor.execute("SELECT nextval(pg_get_serial_sequence('tasks', 'id')) AS id").fetchone()
+    return int(row["id"])
+
+
+def _sync_task_sequence(cursor) -> None:
+    cursor.execute(
+        "SELECT setval(pg_get_serial_sequence('tasks', 'id'), COALESCE((SELECT MAX(id) FROM tasks), 0), true)"
+    )
+
+
+def _get_or_create_category_id(cursor, user_id: int, name: str | None) -> int | None:
+    if not name:
+        return None
+    row = cursor.execute(
+        """
+        INSERT INTO categories(user_id, name, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, name)
+        DO UPDATE SET updated_at = EXCLUDED.updated_at
+        RETURNING id
+        """,
+        (user_id, name),
+    ).fetchone()
+    return int(row["id"])
+
+
+def _get_or_create_tag_id(cursor, user_id: int, name: str) -> int:
+    row = cursor.execute(
+        """
+        INSERT INTO tags(user_id, name, updated_at)
+        VALUES (%s, %s, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, name)
+        DO UPDATE SET updated_at = EXCLUDED.updated_at
+        RETURNING id
+        """,
+        (user_id, name),
+    ).fetchone()
+    return int(row["id"])
+
+
+def _normalize_done_at(task: dict[str, Any]) -> datetime | None:
+    if task.get("done"):
+        done_at = task.get("done_at")
+        if isinstance(done_at, datetime):
+            return done_at
+        return datetime.now(timezone.utc)
+    return None
+
+
 def init_db():
     print("DEBUG: init_db (postgres)")
     with _conn() as conn:
         with conn.cursor() as c:
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    name TEXT
-                )
-            """)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id BIGINT PRIMARY KEY,
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    title TEXT NOT NULL,
-                    category TEXT,
-                    priority TEXT,
-                    done BOOLEAN DEFAULT FALSE,
-                    comment TEXT DEFAULT ''
-                )
-            """)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS categories (
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    name TEXT NOT NULL,
-                    PRIMARY KEY(user_id, name)
-                )
-            """)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS tags (
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    name TEXT NOT NULL,
-                    PRIMARY KEY(user_id, name)
-                )
-            """)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS task_tags (
-                    task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-                    tag TEXT NOT NULL,
-                    PRIMARY KEY(task_id, tag)
-                )
-            """)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
-                    user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                    key TEXT NOT NULL,
-                    value TEXT NOT NULL,
-                    PRIMARY KEY(user_id, key)
-                )
-            """)
+            try:
+                c.execute("SELECT version_num FROM alembic_version")
+            except errors.UndefinedTable as exc:
+                raise RuntimeError(
+                    "Схема базы данных не инициализирована. Выполните `alembic upgrade head`."
+                ) from exc
         conn.commit()
 
-    # register default owner user and import initial data if DB is empty
     if OWNER_CHAT_ID:
         register_user(OWNER_CHAT_ID)
     else:
@@ -84,42 +112,42 @@ def import_tasks_from_template(user_id: int):
 
     with _conn() as conn:
         with conn.cursor() as c:
-            row = c.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM tasks").fetchone()
-            next_id = int(row["max_id"]) + 1
-
             for t in tasks:
-                c.execute(
+                category_id = _get_or_create_category_id(c, user_id, t.get("category"))
+                priority_value = _priority_to_db(t.get("priority"))
+                status = "done" if t.get("done") else DEFAULT_STATUS
+                done_at = datetime.now(timezone.utc) if status == "done" else None
+
+                row = c.execute(
                     """
-                    INSERT INTO tasks(id, user_id, title, category, priority, done, comment)
+                    INSERT INTO tasks(user_id, title, category_id, priority, status, comment, done_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                     """,
                     (
-                        next_id,
                         user_id,
                         t["title"],
-                        t.get("category"),
-                        t.get("priority"),
-                        bool(t.get("done", False)),
+                        category_id,
+                        priority_value,
+                        status,
                         t.get("comment", ""),
+                        done_at,
                     ),
-                )
+                ).fetchone()
+                task_id = int(row["id"])
 
                 for tag in t.get("tags", []):
+                    tag_id = _get_or_create_tag_id(c, user_id, tag)
                     c.execute(
                         """
-                        INSERT INTO tags(user_id, name) VALUES (%s, %s)
+                        INSERT INTO task_tags(task_id, tag_id)
+                        VALUES (%s, %s)
                         ON CONFLICT DO NOTHING
                         """,
-                        (user_id, tag),
+                        (task_id, tag_id),
                     )
-                    c.execute(
-                        """
-                        INSERT INTO task_tags(task_id, tag) VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                        """,
-                        (next_id, tag),
-                    )
-                next_id += 1
+
+            _sync_task_sequence(c)
         conn.commit()
 
 
@@ -128,11 +156,14 @@ def register_user(user_id: int, name: str | None = None):
     with _conn() as conn:
         with conn.cursor() as c:
             c.execute(
-                "INSERT INTO users(user_id, name) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING",
+                """
+                INSERT INTO users(user_id, name)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name
+                """,
                 (user_id, name),
             )
 
-            # default settings
             row = c.execute("SELECT COUNT(*) AS cnt FROM settings WHERE user_id=%s", (user_id,)).fetchone()
             if int(row["cnt"]) == 0:
                 c.execute(
@@ -144,17 +175,19 @@ def register_user(user_id: int, name: str | None = None):
                     (user_id,),
                 )
 
-            # default categories
             row = c.execute("SELECT COUNT(*) AS cnt FROM categories WHERE user_id=%s", (user_id,)).fetchone()
             if int(row["cnt"]) == 0 and os.path.exists(CATEGORIES_FILE):
                 with open(CATEGORIES_FILE, "r", encoding="utf-8") as f:
                     for cat_name in json.load(f):
                         c.execute(
-                            "INSERT INTO categories(user_id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                            """
+                            INSERT INTO categories(user_id, name)
+                            VALUES (%s, %s)
+                            ON CONFLICT (user_id, name) DO NOTHING
+                            """,
                             (user_id, cat_name),
                         )
 
-            # default tasks check
             row = c.execute("SELECT COUNT(*) AS cnt FROM tasks WHERE user_id=%s", (user_id,)).fetchone()
             has_tasks = int(row["cnt"]) > 0
 
@@ -171,27 +204,44 @@ def get_all_users():
 
 
 def get_next_task_id(user_id: int) -> int:
-    # kept for compatibility with existing logic
     with _conn() as conn:
-        row = conn.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM tasks").fetchone()
-    return int(row["max_id"]) + 1
+        with conn.cursor() as cursor:
+            _sync_task_sequence(cursor)
+            next_id = _next_task_id(cursor)
+        conn.commit()
+    return next_id
 
 
 def load_tasks(user_id: int):
     print("DEBUG: load_tasks")
     with _conn() as conn:
-        tasks = conn.execute(
-            "SELECT * FROM tasks WHERE user_id=%s ORDER BY id",
-            (user_id,),
-        ).fetchall()
-
-        for t in tasks:
-            rows = conn.execute(
-                "SELECT tag FROM task_tags WHERE task_id=%s",
-                (t["id"],),
+        with conn.cursor() as c:
+            tasks = c.execute(
+                """
+                SELECT t.id, t.title, t.priority, t.status, t.comment, t.due_at, t.created_at, t.updated_at, t.done_at,
+                       c.name AS category
+                FROM tasks t
+                LEFT JOIN categories c ON c.id = t.category_id
+                WHERE t.user_id=%s
+                ORDER BY t.id
+                """,
+                (user_id,),
             ).fetchall()
-            t["tags"] = [r["tag"] for r in rows]
-            t["done"] = bool(t["done"])
+
+            for t in tasks:
+                rows = c.execute(
+                    """
+                    SELECT tg.name AS tag
+                    FROM task_tags tt
+                    JOIN tags tg ON tg.id = tt.tag_id
+                    WHERE tt.task_id=%s
+                    ORDER BY tg.name
+                    """,
+                    (t["id"],),
+                ).fetchall()
+                t["tags"] = [r["tag"] for r in rows]
+                t["done"] = (t.get("status") == "done")
+                t["priority"] = _priority_from_db(t.get("priority"))
 
     print(f"DEBUG: load_tasks -> {len(tasks)} tasks")
     if not tasks:
@@ -203,53 +253,55 @@ def save_tasks(user_id: int, tasks: list[dict[str, Any]]):
     print("DEBUG: save_tasks")
     with _conn() as conn:
         with conn.cursor() as cursor:
-            row = cursor.execute("SELECT COALESCE(MAX(id), 0) AS max_id FROM tasks").fetchone()
-            next_id = int(row["max_id"]) + 1
-
-            # delete tags for tasks belonging to user (must be before deleting tasks if you had FK constraints)
             cursor.execute(
                 """
                 DELETE FROM task_tags
-                WHERE task_id IN (SELECT id FROM tasks WHERE user_id=%s)
+                USING tasks
+                WHERE task_tags.task_id = tasks.id AND tasks.user_id=%s
                 """,
                 (user_id,),
             )
             cursor.execute("DELETE FROM tasks WHERE user_id=%s", (user_id,))
 
             for t in tasks:
+                priority_value = _priority_to_db(t.get("priority"))
+                status = "done" if t.get("done") else t.get("status", DEFAULT_STATUS)
+                done_at = _normalize_done_at(t)
+                category_id = _get_or_create_category_id(cursor, user_id, t.get("category"))
+
                 task_id = t.get("id")
                 if task_id is None:
-                    task_id = next_id
-                    next_id += 1
+                    task_id = _next_task_id(cursor)
                 else:
-                    next_id = max(next_id, int(task_id) + 1)
-                t["id"] = task_id
+                    task_id = int(task_id)
 
                 cursor.execute(
                     """
-                    INSERT INTO tasks(id, user_id, title, category, priority, done, comment)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO tasks(id, user_id, title, category_id, priority, status, comment, due_at, done_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                     """,
                     (
                         task_id,
                         user_id,
                         t["title"],
-                        t.get("category"),
-                        t.get("priority"),
-                        bool(t.get("done", False)),
+                        category_id,
+                        priority_value,
+                        status,
                         t.get("comment", ""),
+                        t.get("due_at"),
+                        done_at,
                     ),
                 )
+                t["id"] = task_id
 
                 for tag in t.get("tags", []) or []:
+                    tag_id = _get_or_create_tag_id(cursor, user_id, tag)
                     cursor.execute(
-                        "INSERT INTO tags(user_id, name) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                        (user_id, tag),
+                        "INSERT INTO task_tags(task_id, tag_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (task_id, tag_id),
                     )
-                    cursor.execute(
-                        "INSERT INTO task_tags(task_id, tag) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                        (task_id, tag),
-                    )
+
+            _sync_task_sequence(cursor)
 
         conn.commit()
 
@@ -275,7 +327,10 @@ def save_categories(user_id: int, categories: list[str]):
             c.execute("DELETE FROM categories WHERE user_id=%s", (user_id,))
             for name in categories:
                 c.execute(
-                    "INSERT INTO categories(user_id, name) VALUES (%s, %s)",
+                    """
+                    INSERT INTO categories(user_id, name, updated_at)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP)
+                    """,
                     (user_id, name),
                 )
         conn.commit()
@@ -300,11 +355,12 @@ def load_active_tags(user_id: int):
     with _conn() as conn:
         rows = conn.execute(
             """
-            SELECT DISTINCT tt.tag AS tag
+            SELECT DISTINCT tg.name AS tag
             FROM task_tags tt
             JOIN tasks t ON t.id = tt.task_id
-            WHERE t.done = FALSE AND t.user_id = %s
-            ORDER BY tt.tag
+            JOIN tags tg ON tg.id = tt.tag_id
+            WHERE t.status = 'active' AND t.user_id = %s
+            ORDER BY tg.name
             """,
             (user_id,),
         ).fetchall()
