@@ -1,3 +1,32 @@
 services:
+  postgres:
+    # В проде НЕ публикуем Postgres наружу
+    ports: []
+    restart: unless-stopped
+
+    # Том данных оставляем
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    # Healthcheck полезен (если нет — добавь)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   bot:
+    restart: unless-stopped
+
+    # В проде НЕ монтируем код с хоста (никаких .:/app)
     volumes: []
+
+    # (Опционально) Не публикуем порты бота — ему не надо
+    ports: []
+
+    # Логи, чтобы не раздували диск
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
