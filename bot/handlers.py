@@ -825,7 +825,6 @@ async def cancel(update: Update, context: CallbackContext):
 
 def main():
     print('DEBUG: main')
-    init_db()
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler('start', start))

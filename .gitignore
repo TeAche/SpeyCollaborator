@@ -1,11 +1,21 @@
-# Ignore environment variables file and .idea
+# env / secrets
 .env
-.idea
 
-# Ignore Python virtual environment directories
+# python
 venv/
-ENV/
-.envrc
+.venv/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-/tasks.db
+# local db
+tasks.db
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
