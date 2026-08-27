@@ -19,3 +19,6 @@ tasks.db
 # OS
 .DS_Store
 Thumbs.db
+
+# chromium/electron crash log
+debug.log
